@@ -1,3 +1,37 @@
-{
-  "_comment": "Sample alert payload — replace with real alert schema from your monitoring tool"
-}
+[
+  {
+    "id": "alert-001",
+    "timestamp": "2025-03-02T10:00:00Z",
+    "service": "auth-service",
+    "severity": "HIGH",
+    "error": "Connection pool exhaustion — p99 latency spike to 4200ms",
+    "affected_files": [
+      "src/db/connection.py",
+      "src/auth/session.py"
+    ],
+    "environment": "production"
+  },
+  {
+    "id": "alert-002",
+    "timestamp": "2025-03-02T11:15:00Z",
+    "service": "reporting-service",
+    "severity": "MEDIUM",
+    "error": "Intermittent timeout when generating monthly usage reports",
+    "affected_files": [
+      "src/reports/generator.py",
+      "src/utils/cache_layer.py"
+    ],
+    "environment": "production"
+  },
+  {
+    "id": "alert-003",
+    "timestamp": "2025-03-02T12:30:00Z",
+    "service": "notification-service",
+    "severity": "LOW",
+    "error": "Deprecated config flag detected — fallback mode engaged",
+    "affected_files": [
+      "src/config/flags.py"
+    ],
+    "environment": "staging"
+  }
+]
