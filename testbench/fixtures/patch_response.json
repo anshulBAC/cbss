@@ -1,0 +1,7 @@
+{
+  "diff": "--- a/src/db/connection.py\n+++ b/src/db/connection.py\n@@ -8,7 +8,7 @@\n # Connection pool configuration\n-POOL_TIMEOUT = 60\n+POOL_TIMEOUT = 30\n # Revert timeout increase — doubling timeout under existing load causes pool saturation",
+  "explanation": "This patch reverts the connection pool timeout from 60 seconds back to the original 30 seconds. The recent increase from 30s to 60s doubles the duration each connection is held open, which under the same traffic load effectively halves available pool capacity. Reverting this single configuration value should immediately reduce active connection count and resolve the p99 latency spike.",
+  "blast_radius": "This change affects auth-service directly and touches shared infrastructure (postgres-primary, redis-cache). Downstream services api-gateway, billing-service, and admin-dashboard may see slightly improved response times as auth-service pressure reduces. The change is a resource reduction so side effects should be positive.",
+  "confidence": 0.87,
+  "affected_services": ["auth-service", "api-gateway", "billing-service", "admin-dashboard"]
+}

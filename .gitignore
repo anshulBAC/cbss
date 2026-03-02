@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 audit_log.json
+node_modules/
+package.json
+package-lock.json
