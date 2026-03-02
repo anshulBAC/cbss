@@ -101,7 +101,7 @@ def diagnose(context_bundle):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4-turbo",
+            model="gpt-4.1",
             response_format={"type": "json_object"},
             temperature=0.2,
             messages=[
