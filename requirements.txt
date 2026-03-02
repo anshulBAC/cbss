@@ -1,3 +1,2 @@
-# Add dependencies here as you build
-# openai       (Codex API)
-# python-dotenv
+openai
+python-dotenv
