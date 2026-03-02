@@ -101,13 +101,14 @@ def generate_patch(hypothesis, context_bundle):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4-turbo",
+            model="gpt-4.1",
             response_format={"type": "json_object"},
             temperature=0.2,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
-            ],
+        ],
+            
         )
     except openai.APITimeoutError as e:
         print(f"[PATCH] ERROR: Request timed out — {e}")
