@@ -1,5 +1,3 @@
-# Entry point — runs the full pipeline in order:
-# alert → context → scoring → route → diagnose → gate1 → patch → gate2 → sandbox → deploy → log
 # Entry point — orchestrates the full Codex Guardian pipeline in order:
 # alert → context → scoring → route → diagnose → gate1 → patch → gate2 → sandbox → log
 
@@ -45,6 +43,31 @@ def _load_alert(alert_index=0):
     print(f"[MAIN] Loaded alert: [{alert['id']}] {alert['service']} — {alert['error']}")
     print(f"       Severity: {alert['severity']} | Environment: {alert['environment']}")
     return alert
+
+
+# ─────────────────────────────────────────────────────────────
+# GATE 2 ADAPTER
+# ─────────────────────────────────────────────────────────────
+
+def _adapt_patch_for_gate2(patch_proposal):
+    """
+    gate2_ui.py expects blast_radius as a dict with keys 'level', 'services_touched',
+    'files_touched', and 'notes'. The data contract (and codex/patch.py) returns
+    blast_radius as a plain string. This adapter wraps it into the required shape.
+    Also maps 'explanation' -> 'reasoning' since gate2_ui.py looks for 'reasoning'.
+    """
+    blast_str = patch_proposal.get("blast_radius", "")
+    adapted = dict(patch_proposal)
+    adapted["blast_radius"] = {
+        "level": "HIGH" if any(
+            w in blast_str.lower() for w in ["critical", "high", "major"]
+        ) else "MEDIUM",
+        "services_touched": patch_proposal.get("affected_services", []),
+        "files_touched": [],
+        "notes": blast_str,
+    }
+    adapted["reasoning"] = patch_proposal.get("explanation", "")
+    return adapted
 
 
 # ─────────────────────────────────────────────────────────────
@@ -181,7 +204,7 @@ def run_pipeline(alert_index=0):
 
         # ── STEP 9: Gate 2 — Engineer approves fix ────────────
         _header("STEP 9 — Gate 2: Approve Fix")
-        gate2_result = run_gate2(patch_proposal)
+        gate2_result = run_gate2(_adapt_patch_for_gate2(patch_proposal))
 
         if gate2_result["decision"] == "rejected":
             feedback = gate2_result.get("rationale", gate2_result.get("feedback", ""))
@@ -247,7 +270,7 @@ def run_pipeline(alert_index=0):
             patch_proposal = generate_patch(confirmed_hypothesis, context_bundle)
 
             _header("STEP 9 — Gate 2: Re-Approve Fix")
-            gate2_result = run_gate2(patch_proposal)
+            gate2_result = run_gate2(_adapt_patch_for_gate2(patch_proposal))
 
             if gate2_result["decision"] == "rejected":
                 feedback = gate2_result.get("rationale", gate2_result.get("feedback", ""))
