@@ -1,5 +1,6 @@
 """
 Unit tests for context modules: git_history, dependency_graph, org_context, bundle.
+Updated for Phase 1 — stubs are now alert-aware and parameterised by service/files.
 No API key required. No external dependencies.
 """
 
@@ -19,6 +20,8 @@ from context.bundle import build_context_bundle
 
 class TestGitHistory(unittest.TestCase):
 
+    # --- Shape contract (must always hold) ---
+
     def test_returns_dict(self):
         result = get_git_history(["src/db/connection.py"])
         self.assertIsInstance(result, dict)
@@ -33,7 +36,7 @@ class TestGitHistory(unittest.TestCase):
         self.assertIn("last_reviewed_days_ago", result)
         self.assertIsInstance(result["last_reviewed_days_ago"], int)
 
-    def test_last_reviewed_is_positive(self):
+    def test_last_reviewed_is_non_negative(self):
         result = get_git_history([])
         self.assertGreaterEqual(result["last_reviewed_days_ago"], 0)
 
@@ -56,22 +59,85 @@ class TestGitHistory(unittest.TestCase):
         for commit in result["recent_commits"]:
             self.assertIsInstance(commit["files_changed"], list)
 
-    def test_empty_file_list_still_returns_history(self):
-        result = get_git_history([])
-        self.assertIn("recent_commits", result)
+    # --- Alert-awareness (new behaviour) ---
 
-    def test_multiple_files_still_returns_history(self):
+    def test_connection_file_returns_relevant_commits(self):
+        result = get_git_history(["src/db/connection.py"])
+        self.assertGreater(len(result["recent_commits"]), 0)
+        # All returned commits should reference the affected file
+        for commit in result["recent_commits"]:
+            self.assertIn("src/db/connection.py", commit["files_changed"])
+
+    def test_session_file_returns_relevant_commits(self):
+        result = get_git_history(["src/auth/session.py"])
+        self.assertGreater(len(result["recent_commits"]), 0)
+        for commit in result["recent_commits"]:
+            self.assertIn("src/auth/session.py", commit["files_changed"])
+
+    def test_multiple_files_returns_commits_for_each(self):
         result = get_git_history(["src/db/connection.py", "src/auth/session.py"])
-        self.assertIn("recent_commits", result)
+        files_touched = [
+            f for commit in result["recent_commits"]
+            for f in commit["files_changed"]
+        ]
+        self.assertIn("src/db/connection.py", files_touched)
+        self.assertIn("src/auth/session.py", files_touched)
+
+    def test_unknown_file_returns_empty_commits(self):
+        result = get_git_history(["src/unknown/random.py"])
+        self.assertEqual(result["recent_commits"], [])
+
+    def test_empty_file_list_returns_empty_commits(self):
+        result = get_git_history([])
+        self.assertEqual(result["recent_commits"], [])
+
+    def test_commits_sorted_most_recent_first(self):
+        result = get_git_history(["src/db/connection.py"])
+        days = [c["days_ago"] for c in result["recent_commits"]]
+        self.assertEqual(days, sorted(days))
+
+    def test_no_duplicate_commits_for_overlapping_files(self):
+        result = get_git_history(["src/db/connection.py", "src/db/connection.py"])
+        hashes = [c["hash"] for c in result["recent_commits"]]
+        self.assertEqual(len(hashes), len(set(hashes)))
+
+    # --- Service-aware review recency ---
+
+    def test_auth_service_review_recency(self):
+        result = get_git_history([], service="auth-service")
+        self.assertEqual(result["last_reviewed_days_ago"], 3)
+
+    def test_reporting_service_review_recency(self):
+        result = get_git_history([], service="reporting-service")
+        self.assertEqual(result["last_reviewed_days_ago"], 18)
+
+    def test_notification_service_review_recency(self):
+        result = get_git_history([], service="notification-service")
+        self.assertEqual(result["last_reviewed_days_ago"], 7)
+
+    def test_unknown_service_returns_default_recency(self):
+        result = get_git_history([], service="unknown-service")
+        self.assertIsInstance(result["last_reviewed_days_ago"], int)
+        self.assertGreaterEqual(result["last_reviewed_days_ago"], 0)
+
+    def test_no_service_arg_returns_default_recency(self):
+        result = get_git_history([])
+        self.assertIsInstance(result["last_reviewed_days_ago"], int)
 
 
 # ── Dependency Graph Tests ────────────────────────────────────────────────────
 
 class TestDependencyGraph(unittest.TestCase):
 
+    # --- Shape contract ---
+
     def test_returns_dict(self):
         result = get_dependency_graph("auth-service")
         self.assertIsInstance(result, dict)
+
+    def test_has_service_key(self):
+        result = get_dependency_graph("auth-service")
+        self.assertIn("service", result)
 
     def test_has_depends_on(self):
         result = get_dependency_graph("auth-service")
@@ -88,15 +154,59 @@ class TestDependencyGraph(unittest.TestCase):
         self.assertIn("shared_infra", result)
         self.assertIsInstance(result["shared_infra"], list)
 
-    def test_depends_on_contains_strings(self):
+    def test_all_values_are_strings(self):
         result = get_dependency_graph("auth-service")
-        for item in result["depends_on"]:
-            self.assertIsInstance(item, str)
+        for key in ["depends_on", "depended_on_by", "shared_infra"]:
+            for item in result[key]:
+                self.assertIsInstance(item, str)
 
-    def test_depended_on_by_contains_strings(self):
+    # --- Alert-awareness (new behaviour) ---
+
+    def test_auth_service_has_correct_dependencies(self):
         result = get_dependency_graph("auth-service")
-        for item in result["depended_on_by"]:
-            self.assertIsInstance(item, str)
+        self.assertIn("postgres-primary", result["depends_on"])
+        self.assertIn("redis-cache", result["depends_on"])
+        self.assertIn("user-service", result["depends_on"])
+
+    def test_auth_service_has_correct_dependents(self):
+        result = get_dependency_graph("auth-service")
+        self.assertIn("api-gateway", result["depended_on_by"])
+        self.assertIn("billing-service", result["depended_on_by"])
+
+    def test_auth_service_has_shared_infra(self):
+        result = get_dependency_graph("auth-service")
+        self.assertIn("postgres-primary", result["shared_infra"])
+        self.assertIn("redis-cache", result["shared_infra"])
+
+    def test_reporting_service_has_correct_dependencies(self):
+        result = get_dependency_graph("reporting-service")
+        self.assertIn("postgres-replica", result["depends_on"])
+        self.assertIn("data-warehouse", result["depends_on"])
+
+    def test_notification_service_has_no_dependents(self):
+        result = get_dependency_graph("notification-service")
+        self.assertEqual(result["depended_on_by"], [])
+
+    def test_notification_service_has_no_shared_infra(self):
+        result = get_dependency_graph("notification-service")
+        self.assertEqual(result["shared_infra"], [])
+
+    def test_unknown_service_returns_empty_graph(self):
+        result = get_dependency_graph("unknown-service")
+        self.assertEqual(result["depends_on"], [])
+        self.assertEqual(result["depended_on_by"], [])
+        self.assertEqual(result["shared_infra"], [])
+
+    def test_service_key_matches_input(self):
+        result = get_dependency_graph("reporting-service")
+        self.assertEqual(result["service"], "reporting-service")
+
+    def test_mutation_does_not_affect_registry(self):
+        # Modifying the returned list should not corrupt future calls
+        result1 = get_dependency_graph("auth-service")
+        result1["depends_on"].append("injected-service")
+        result2 = get_dependency_graph("auth-service")
+        self.assertNotIn("injected-service", result2["depends_on"])
 
 
 # ── Org Context Tests ─────────────────────────────────────────────────────────
@@ -152,56 +262,117 @@ class TestOrgContext(unittest.TestCase):
 
 class TestContextBundle(unittest.TestCase):
 
-    def _sample_alert(self):
+    def _auth_alert(self):
         return {
-            "id": "test-001",
+            "id": "alert-001",
             "service": "auth-service",
             "severity": "HIGH",
-            "error": "connection pool exhaustion",
-            "affected_files": ["src/db/connection.py"],
+            "error": "Connection pool exhaustion",
+            "affected_files": ["src/db/connection.py", "src/auth/session.py"],
             "environment": "production",
         }
 
+    def _notification_alert(self):
+        return {
+            "id": "alert-003",
+            "service": "notification-service",
+            "severity": "LOW",
+            "error": "Deprecated config flag",
+            "affected_files": ["src/config/flags.py"],
+            "environment": "staging",
+        }
+
+    # --- Shape contract ---
+
     def test_bundle_returns_dict(self):
-        result = build_context_bundle(self._sample_alert())
+        result = build_context_bundle(self._auth_alert())
         self.assertIsInstance(result, dict)
 
-    def test_bundle_contains_alert(self):
-        alert = self._sample_alert()
-        result = build_context_bundle(alert)
-        self.assertIn("alert", result)
+    def test_bundle_contains_required_keys(self):
+        result = build_context_bundle(self._auth_alert())
+        for key in ["alert", "git_history", "dependencies", "org_context"]:
+            self.assertIn(key, result)
 
     def test_bundle_alert_matches_input(self):
-        alert = self._sample_alert()
+        alert = self._auth_alert()
         result = build_context_bundle(alert)
-        self.assertEqual(result["alert"]["id"], "test-001")
+        self.assertEqual(result["alert"]["id"], "alert-001")
         self.assertEqual(result["alert"]["service"], "auth-service")
 
-    def test_bundle_contains_git_history(self):
-        result = build_context_bundle(self._sample_alert())
-        self.assertIn("git_history", result)
+    def test_bundle_contains_git_commits(self):
+        result = build_context_bundle(self._auth_alert())
         self.assertIn("recent_commits", result["git_history"])
 
-    def test_bundle_contains_dependencies(self):
-        result = build_context_bundle(self._sample_alert())
-        self.assertIn("dependencies", result)
+    def test_bundle_contains_dependency_keys(self):
+        result = build_context_bundle(self._auth_alert())
         self.assertIn("depends_on", result["dependencies"])
+        self.assertIn("depended_on_by", result["dependencies"])
 
     def test_bundle_contains_org_context(self):
-        result = build_context_bundle(self._sample_alert())
-        self.assertIn("org_context", result)
+        result = build_context_bundle(self._auth_alert())
         self.assertIn("injected_context", result["org_context"])
 
-    def test_bundle_injected_context_is_mutable_list(self):
-        result = build_context_bundle(self._sample_alert())
+    # --- Alert-awareness in bundle ---
+
+    def test_bundle_git_history_scoped_to_affected_files(self):
+        result = build_context_bundle(self._auth_alert())
+        files_touched = [
+            f for commit in result["git_history"]["recent_commits"]
+            for f in commit["files_changed"]
+        ]
+        # Should reference the actual affected files, not generic ones
+        self.assertTrue(
+            any("connection.py" in f or "session.py" in f for f in files_touched)
+        )
+
+    def test_bundle_dependencies_scoped_to_service(self):
+        result = build_context_bundle(self._auth_alert())
+        self.assertIn("postgres-primary", result["dependencies"]["depends_on"])
+
+    def test_bundle_notification_service_has_different_deps(self):
+        auth_result = build_context_bundle(self._auth_alert())
+        notif_result = build_context_bundle(self._notification_alert())
+        # Different services should produce different dependency graphs
+        self.assertNotEqual(
+            auth_result["dependencies"]["depends_on"],
+            notif_result["dependencies"]["depends_on"],
+        )
+
+    def test_bundle_notification_commits_scoped_to_flags_file(self):
+        result = build_context_bundle(self._notification_alert())
+        files_touched = [
+            f for commit in result["git_history"]["recent_commits"]
+            for f in commit["files_changed"]
+        ]
+        # flags.py commits should appear, not connection.py
+        self.assertTrue(
+            all("flags.py" in f for f in files_touched) if files_touched else True
+        )
+
+    def test_bundle_review_recency_scoped_to_service(self):
+        auth_result = build_context_bundle(self._auth_alert())
+        notif_result = build_context_bundle(self._notification_alert())
+        # Should return different review recency for different services
+        self.assertNotEqual(
+            auth_result["git_history"]["last_reviewed_days_ago"],
+            notif_result["git_history"]["last_reviewed_days_ago"],
+        )
+
+    def test_bundle_injected_context_starts_empty(self):
+        result = build_context_bundle(self._auth_alert())
+        self.assertEqual(result["org_context"]["injected_context"], [])
+
+    def test_bundle_injected_context_is_mutable(self):
+        result = build_context_bundle(self._auth_alert())
         result["org_context"]["injected_context"].append("test injection")
         self.assertIn("test injection", result["org_context"]["injected_context"])
 
     def test_bundle_works_with_minimal_alert(self):
-        minimal_alert = {"id": "min-001", "service": "svc", "affected_files": []}
-        result = build_context_bundle(minimal_alert)
+        minimal = {"id": "min-001", "service": "unknown-service", "affected_files": []}
+        result = build_context_bundle(minimal)
         self.assertIn("alert", result)
         self.assertIn("git_history", result)
+        self.assertEqual(result["dependencies"]["depends_on"], [])
 
 
 if __name__ == "__main__":
