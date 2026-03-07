@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Codex Guardian — Command Center</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #070c18;
+      --surface:   #0d1525;
+      --card:      #101828;
+      --card-2:    #131f33;
+      --border:    #1a2740;
+      --border-2:  #243555;
+      --text:      #e2e8f0;
+      --muted:     #4e6180;
+      --dim:       #8899b0;
+      --blue:      #3b82f6;
+      --blue-glow: rgba(59,130,246,0.12);
+      --green:     #10b981;
+      --green-glow:rgba(16,185,129,0.12);
+      --red:       #ef4444;
+      --red-glow:  rgba(239,68,68,0.12);
+      --yellow:    #f59e0b;
+      --yel-glow:  rgba(245,158,11,0.12);
+      --purple:    #a78bfa;
+      --pur-glow:  rgba(167,139,250,0.12);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── Header ─────────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 28px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo-block { display: flex; flex-direction: column; gap: 2px; }
+    .logo {
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      color: var(--blue);
+      text-transform: uppercase;
+    }
+    .tagline {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .live-badge {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--green);
+      letter-spacing: 0.12em;
+    }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--green);
+      border-radius: 50%;
+      animation: pulse-dot 2s infinite;
+    }
+    @keyframes pulse-dot {
+      0%,100% { opacity: 1; box-shadow: 0 0 4px var(--green); }
+      50% { opacity: 0.35; box-shadow: none; }
+    }
+
+    .clock { font-size: 11px; color: var(--muted); }
+
+    /* ── Main layout ─────────────────────────────────────── */
+    .main { padding: 22px 28px; max-width: 1600px; margin: 0 auto; }
+
+    /* ── KPI strip ───────────────────────────────────────── */
+    .kpi-strip {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      margin-bottom: 22px;
+      min-width: 0;
+    }
+
+    .kpi {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: border-color 0.2s;
+    }
+    .kpi:hover { border-color: var(--border-2); }
+
+    .kpi-label {
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .kpi-num {
+      font-size: 34px;
+      font-weight: 800;
+      line-height: 1;
+      color: var(--text);
+    }
+    .kpi-num.c-blue   { color: var(--blue); }
+    .kpi-num.c-green  { color: var(--green); }
+    .kpi-num.c-yellow { color: var(--yellow); }
+    .kpi-num.c-red    { color: var(--red); }
+    .kpi-sub { font-size: 10px; color: var(--muted); }
+
+    /* ── Two-col layout ──────────────────────────────────── */
+    .two-col {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 280px;
+      gap: 18px;
+      margin-bottom: 22px;
+      align-items: start;
+    }
+
+    /* ── Section ─────────────────────────────────────────── */
+    .section { margin-bottom: 22px; }
+
+    .section-title {
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      font-weight: 700;
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .s-badge {
+      font-size: 9px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      background: var(--blue-glow);
+      color: var(--blue);
+      border: 1px solid rgba(59,130,246,0.25);
+      letter-spacing: 0.1em;
+    }
+
+    /* ── Pipeline diagram ────────────────────────────────── */
+    .pipeline-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 22px 24px;
+      overflow-x: auto;
+    }
+
+    .pip-row {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      margin-bottom: 6px;
+      flex-wrap: nowrap;
+      min-width: max-content;
+    }
+
+    .pip-node {
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+    .pip-node .sub {
+      font-size: 8px;
+      font-weight: 400;
+      letter-spacing: 0.08em;
+      opacity: 0.65;
+    }
+    .pip-node.n-blue   { border-color: var(--blue);   color: var(--blue);   background: var(--blue-glow);  }
+    .pip-node.n-yellow { border-color: var(--yellow); color: var(--yellow); background: var(--yel-glow);   }
+    .pip-node.n-green  { border-color: var(--green);  color: var(--green);  background: var(--green-glow); }
+    .pip-node.n-purple { border-color: var(--purple); color: var(--purple); background: var(--pur-glow);   }
+
+    .pip-arrow { color: var(--border-2); padding: 0 8px; font-size: 15px; user-select: none; }
+
+    .pip-fork {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 4px 0 6px 12px;
+    }
+    .pip-fork-line {
+      width: 1px;
+      height: 48px;
+      background: var(--border-2);
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+    .pip-fork-labels { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+    .fork-lo { font-size: 10px; color: var(--green); }
+    .fork-hi { font-size: 10px; color: var(--yellow); }
+
+    /* ── Metrics sidebar ─────────────────────────────────── */
+    .metrics-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .metric-item {}
+    .metric-label {
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .metric-bar-wrap {
+      height: 5px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+    .metric-bar {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.6s cubic-bezier(.4,0,.2,1);
+    }
+    .metric-bar.b-green  { background: var(--green);  }
+    .metric-bar.b-red    { background: var(--red);    }
+    .metric-bar.b-blue   { background: var(--blue);   }
+    .metric-bar.b-yellow { background: var(--yellow); }
+    .metric-vals { display: flex; justify-content: space-between; }
+    .metric-pct { font-size: 12px; font-weight: 700; }
+    .metric-pct.c-green  { color: var(--green);  }
+    .metric-pct.c-red    { color: var(--red);    }
+    .metric-pct.c-blue   { color: var(--blue);   }
+    .metric-detail { font-size: 10px; color: var(--muted); }
+
+    .metric-divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 0;
+    }
+
+    /* ── Policy box ──────────────────────────────────────── */
+    .policy-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+    }
+    .policy-title {
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+    .policy-rule {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      border: 1px solid transparent;
+    }
+    .policy-rule.pr-green {
+      background: var(--green-glow);
+      border-color: rgba(16,185,129,0.2);
+    }
+    .policy-rule.pr-yellow {
+      background: var(--yel-glow);
+      border-color: rgba(245,158,11,0.2);
+    }
+    .policy-icon { font-size: 16px; line-height: 1.4; flex-shrink: 0; }
+    .policy-text {}
+    .policy-condition {
+      font-size: 11px;
+      font-weight: 700;
+      margin-bottom: 3px;
+    }
+    .policy-condition.pc-green  { color: var(--green);  }
+    .policy-condition.pc-yellow { color: var(--yellow); }
+    .policy-desc { font-size: 10px; color: var(--dim); line-height: 1.5; }
+
+    /* ── Latest incident card ────────────────────────────── */
+    .incident-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 22px;
+    }
+
+    .inc-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .inc-id {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: 0.03em;
+    }
+
+    .badge {
+      font-size: 10px;
+      padding: 3px 9px;
+      border-radius: 4px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .b-red    { background: var(--red-glow);   color: var(--red);    border: 1px solid rgba(239,68,68,0.3);   }
+    .b-green  { background: var(--green-glow); color: var(--green);  border: 1px solid rgba(16,185,129,0.3);  }
+    .b-yellow { background: var(--yel-glow);   color: var(--yellow); border: 1px solid rgba(245,158,11,0.3);  }
+    .b-blue   { background: var(--blue-glow);  color: var(--blue);   border: 1px solid rgba(59,130,246,0.3);  }
+    .b-purple { background: var(--pur-glow);   color: var(--purple); border: 1px solid rgba(167,139,250,0.3); }
+
+    .inc-meta {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .meta-cell {
+      background: var(--card-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+    .meta-lbl {
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+    .meta-val {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    /* Journey flow */
+    .journey {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .j-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+    }
+    .j-pill {
+      padding: 3px 10px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+    .j-pill.jp-blue   { background: var(--blue-glow);   color: var(--blue);   border: 1px solid rgba(59,130,246,0.25);  }
+    .j-pill.jp-yellow { background: var(--yel-glow);   color: var(--yellow); border: 1px solid rgba(245,158,11,0.25);  }
+    .j-pill.jp-green  { background: var(--green-glow);  color: var(--green);  border: 1px solid rgba(16,185,129,0.25);  }
+    .j-pill.jp-red    { background: var(--red-glow);    color: var(--red);    border: 1px solid rgba(239,68,68,0.25);   }
+    .j-lbl { font-size: 8px; color: var(--muted); letter-spacing: 0.06em; }
+    .j-arrow { color: var(--border-2); font-size: 14px; }
+
+    .hypothesis-wrap { }
+    .hyp-label {
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .hyp-text {
+      background: var(--card-2);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--blue);
+      border-radius: 4px;
+      padding: 12px 14px;
+      font-size: 12px;
+      color: var(--dim);
+      line-height: 1.6;
+      font-style: italic;
+    }
+
+    .inc-notes { margin-top: 10px; font-size: 10px; color: var(--muted); }
+
+    /* ── Audit table ─────────────────────────────────────── */
+    .table-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      text-align: left;
+      padding: 11px 14px;
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      font-weight: 700;
+      border-bottom: 1px solid var(--border);
+      background: var(--card-2);
+    }
+    tbody td {
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--dim);
+      vertical-align: middle;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: rgba(255,255,255,0.015); }
+    tbody tr.row-latest td { color: var(--text); }
+
+    .chk { color: var(--green); font-weight: 700; }
+    .crs { color: var(--red);   font-weight: 700; }
+    .dsh { color: var(--muted); }
+
+    /* ── Empty / loading ─────────────────────────────────── */
+    .empty {
+      text-align: center;
+      padding: 36px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .empty code {
+      color: var(--blue);
+      background: var(--blue-glow);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    /* ── Scrollbar ───────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ───────────────── HEADER ───────────────── -->
+<header class="header">
+  <div class="logo-block">
+    <div class="logo">⬡ Codex Guardian</div>
+    <div class="tagline">AI Incident Response &nbsp;·&nbsp; Human-in-the-Loop Governance</div>
+  </div>
+  <div class="header-right">
+    <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+    <div class="clock" id="clock"></div>
+  </div>
+</header>
+
+<!-- ───────────────── MAIN ───────────────── -->
+<main class="main">
+
+  <!-- KPI Strip -->
+  <div class="kpi-strip">
+    <div class="kpi">
+      <div class="kpi-label">Total Incidents</div>
+      <div class="kpi-num c-blue" id="kpi-total">—</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Auto-Resolved</div>
+      <div class="kpi-num c-green" id="kpi-auto">—</div>
+      <div class="kpi-sub">no human gates</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Escalated</div>
+      <div class="kpi-num c-yellow" id="kpi-esc">—</div>
+      <div class="kpi-sub">human review required</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Human Approvals</div>
+      <div class="kpi-num c-green" id="kpi-approvals">—</div>
+      <div class="kpi-sub">gate 1 + gate 2</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Patch Success Rate</div>
+      <div class="kpi-num c-blue" id="kpi-success">—</div>
+      <div class="kpi-sub">sandbox validated</div>
+    </div>
+  </div>
+
+  <!-- Pipeline + Metrics -->
+  <div class="two-col">
+    <!-- Pipeline -->
+    <div class="section" style="margin-bottom:0">
+      <div class="section-title">
+        <span>Pipeline</span>
+        <span class="s-badge">9 STAGES</span>
+      </div>
+      <div class="pipeline-box">
+        <!-- Row 1: shared stages -->
+        <div class="pip-row">
+          <div class="pip-node n-blue">ALERT<span class="sub">trigger</span></div>
+          <div class="pip-arrow">──►</div>
+          <div class="pip-node n-blue">CONTEXT<span class="sub">ingestion</span></div>
+          <div class="pip-arrow">──►</div>
+          <div class="pip-node n-blue">RISK SCORE<span class="sub">classifier</span></div>
+          <div class="pip-arrow">──►</div>
+          <div class="pip-node n-blue">FRESHNESS<span class="sub">scorer</span></div>
+          <div class="pip-arrow">──►</div>
+          <div class="pip-node n-blue">ROUTER<span class="sub">decision</span></div>
+        </div>
+
+        <!-- Fork annotation -->
+        <div class="pip-fork">
+          <div class="pip-fork-line"></div>
+          <div class="pip-fork-labels">
+            <div class="fork-lo">↳ LOW risk + FRESH context → AUTO-HANDLE (logged, no human gates)</div>
+            <div class="fork-hi">↳ HIGH risk or STALE context → ESCALATE through Gate 1 → Gate 2</div>
+          </div>
+        </div>
+
+        <!-- Row 2: escalation path -->
+        <div class="pip-row">
+          <div class="pip-node n-yellow">GATE 1<span class="sub">human ✋</span></div>
+          <div class="pip-arrow">──►</div>
+          <div class="pip-node n-blue">PATCH GEN<span class="sub">GPT-4.1</span></div>
+          <div class="pip-arrow">──►</div>
+          <div class="pip-node n-yellow">GATE 2<span class="sub">human ✋</span></div>
+          <div class="pip-arrow">──►</div>
+          <div class="pip-node n-blue">SANDBOX<span class="sub">validation</span></div>
+          <div class="pip-arrow">──►</div>
+          <div class="pip-node n-green">DEPLOY<span class="sub">+ audit log</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="section" style="margin-bottom:0">
+      <div class="section-title"><span>Metrics</span></div>
+      <div class="metrics-box">
+        <div class="metric-item">
+          <div class="metric-label">Sandbox Pass Rate</div>
+          <div class="metric-bar-wrap"><div class="metric-bar b-green" id="bar-sandbox" style="width:0%"></div></div>
+          <div class="metric-vals">
+            <div class="metric-pct c-green" id="pct-sandbox">—</div>
+            <div class="metric-detail" id="det-sandbox">of runs</div>
+          </div>
+        </div>
+        <hr class="metric-divider">
+        <div class="metric-item">
+          <div class="metric-label">Escalation Rate</div>
+          <div class="metric-bar-wrap"><div class="metric-bar b-yellow" id="bar-esc" style="width:0%"></div></div>
+          <div class="metric-vals">
+            <div class="metric-pct c-yellow" id="pct-esc">—</div>
+            <div class="metric-detail">human review triggered</div>
+          </div>
+        </div>
+        <hr class="metric-divider">
+        <div class="metric-item">
+          <div class="metric-label">Gate 1 Confirmations</div>
+          <div class="metric-bar-wrap"><div class="metric-bar b-blue" id="bar-g1" style="width:0%"></div></div>
+          <div class="metric-vals">
+            <div class="metric-pct c-blue" id="pct-g1">—</div>
+            <div class="metric-detail">diagnosis confirmed</div>
+          </div>
+        </div>
+        <hr class="metric-divider">
+        <div class="metric-item">
+          <div class="metric-label">Gate 2 Approvals</div>
+          <div class="metric-bar-wrap"><div class="metric-bar b-blue" id="bar-g2" style="width:0%"></div></div>
+          <div class="metric-vals">
+            <div class="metric-pct c-blue" id="pct-g2">—</div>
+            <div class="metric-detail">patches approved</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Routing Policy -->
+  <div class="section">
+    <div class="section-title">
+      <span>Auto-Handle Policy</span>
+      <span class="s-badge">WHY IT'S SAFE</span>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+      <div class="policy-rule pr-green">
+        <div class="policy-icon">✅</div>
+        <div class="policy-text">
+          <div class="policy-condition pc-green">LOW risk + FRESH context → Auto-Handle</div>
+          <div class="policy-desc">
+            Risk classifier confirms: no auth, payment, or cross-service blast radius.
+            Context freshness verified: recent human review + low commit churn.
+            Cumulative risk is bounded — faulty low-risk patches are isolated by design.
+            Full audit trail written to <strong>audit_log.json</strong> — always reviewable.
+          </div>
+        </div>
+      </div>
+      <div class="policy-rule pr-yellow">
+        <div class="policy-icon">🚦</div>
+        <div class="policy-text">
+          <div class="policy-condition pc-yellow">HIGH risk or STALE context → Escalate</div>
+          <div class="policy-desc">
+            Any high-risk signal (auth, billing, cross-service) or stale context triggers
+            mandatory human gates. Gate 1 validates the AI diagnosis (~30s).
+            Gate 2 approves the patch with explicit accountability — no implicit consent.
+            Rejection at either gate injects engineer context into the next AI pass.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Latest Incident -->
+  <div class="section">
+    <div class="section-title">
+      <span>Latest Incident</span>
+      <span class="s-badge" id="latest-ts">—</span>
+    </div>
+    <div id="latest-card">
+      <div class="incident-card">
+        <div class="empty">No incidents yet. Run <code>python main.py</code> to begin.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audit Log -->
+  <div class="section">
+    <div class="section-title">
+      <span>Audit Log</span>
+      <span class="s-badge" id="audit-count">0 ENTRIES</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Alert ID</th>
+            <th>Risk</th>
+            <th>Freshness</th>
+            <th>Route</th>
+            <th>Gate 1</th>
+            <th>Gate 2</th>
+            <th>Approver</th>
+            <th>Sandbox</th>
+            <th>Outcome</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="10" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  /* ── Clock ─────────────────────────────────────────── */
+  function tick() {
+    document.getElementById('clock').textContent =
+      new Date().toLocaleString('en-US', {
+        month:'2-digit', day:'2-digit', year:'numeric',
+        hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false
+      });
+  }
+  tick(); setInterval(tick, 1000);
+
+  /* ── Helpers ────────────────────────────────────────── */
+  function fmt(ts) {
+    if (!ts) return '—';
+    try {
+      const d = new Date(ts);
+      return d.toLocaleString('en-US',{
+        month:'2-digit',day:'2-digit',
+        hour:'2-digit',minute:'2-digit',hour12:false
+      });
+    } catch { return ts; }
+  }
+
+  function riskBadge(r) {
+    if (!r) return '<span class="dsh">—</span>';
+    const cls = r==='HIGH' ? 'b-red' : r==='MEDIUM' ? 'b-yellow' : 'b-green';
+    return `<span class="badge ${cls}">${r}</span>`;
+  }
+  function freshBadge(f) {
+    if (!f) return '<span class="dsh">—</span>';
+    const cls = f==='FRESH' ? 'b-green' : 'b-yellow';
+    return `<span class="badge ${cls}">${f}</span>`;
+  }
+  function routeBadge(r) {
+    if (!r) return '<span class="dsh">—</span>';
+    if (r==='escalate') return `<span class="badge b-yellow">ESCALATE</span>`;
+    return `<span class="badge b-purple">AUTO-HANDLE</span>`;
+  }
+  function gateBadge(d) {
+    if (!d) return '<span class="dsh">—</span>';
+    if (d==='confirmed' || d==='approved') return `<span class="chk">✓ ${d}</span>`;
+    if (d==='rejected') return `<span class="crs">✗ rejected</span>`;
+    return `<span class="dsh">${d}</span>`;
+  }
+  function sandboxBadge(s) {
+    if (!s) return '<span class="dsh">—</span>';
+    if (s==='pass') return `<span class="chk">✓ pass</span>`;
+    return `<span class="crs">✗ fail</span>`;
+  }
+  function outcomeBadge(o) {
+    if (!o) return '<span class="dsh">—</span>';
+    const cls = (o==='deployed'||o==='auto-resolved') ? 'b-green' : 'b-red';
+    return `<span class="badge ${cls}">${o}</span>`;
+  }
+
+  function pct(num, den) {
+    if (!den) return 0;
+    return Math.round((num/den)*100);
+  }
+
+  /* ── KPIs ──────────────────────────────────────────── */
+  function renderKPIs(e) {
+    const total    = e.length;
+    const auto     = e.filter(x=>x.route_taken==='auto-handle').length;
+    const esc      = e.filter(x=>x.route_taken==='escalate').length;
+    const approved = e.filter(x=>x.engineer_gate2_decision==='approved').length;
+    const deployed = e.filter(x=>x.outcome==='deployed'||x.outcome==='auto-resolved').length;
+    const sandbox  = e.filter(x=>x.sandbox_result==='pass').length;
+
+    document.getElementById('kpi-total').textContent    = total;
+    document.getElementById('kpi-auto').textContent     = auto;
+    document.getElementById('kpi-esc').textContent      = esc;
+    document.getElementById('kpi-approvals').textContent= approved;
+    document.getElementById('kpi-success').textContent  = (total ? pct(deployed,total)+'%' : '—');
+
+    // Gauges
+    const sbPct = pct(sandbox,total);
+    document.getElementById('bar-sandbox').style.width = sbPct+'%';
+    document.getElementById('pct-sandbox').textContent = sbPct+'%';
+    document.getElementById('det-sandbox').textContent = `${sandbox}/${total} passed`;
+
+    const escPct = pct(esc,total);
+    document.getElementById('bar-esc').style.width = escPct+'%';
+    document.getElementById('pct-esc').textContent = escPct+'%';
+
+    const g1ok  = e.filter(x=>x.engineer_gate1_decision==='confirmed').length;
+    const g1tot = e.filter(x=>x.engineer_gate1_decision).length;
+    const g1p   = pct(g1ok,g1tot);
+    document.getElementById('bar-g1').style.width = g1p+'%';
+    document.getElementById('pct-g1').textContent = g1p+'%';
+
+    const g2ok  = e.filter(x=>x.engineer_gate2_decision==='approved').length;
+    const g2tot = e.filter(x=>x.engineer_gate2_decision).length;
+    const g2p   = pct(g2ok,g2tot);
+    document.getElementById('bar-g2').style.width = g2p+'%';
+    document.getElementById('pct-g2').textContent = g2p+'%';
+  }
+
+  /* ── Latest incident ───────────────────────────────── */
+  function renderLatest(entries) {
+    if (!entries.length) return;
+    const e = entries[entries.length-1];
+    document.getElementById('latest-ts').textContent = fmt(e.timestamp);
+
+    // Journey flow
+    const steps = [
+      { label:'ALERT',   pill:`<div class="j-pill jp-blue">ALERT</div>` },
+      { label:'CONTEXT', pill:`<div class="j-pill jp-blue">CONTEXT</div>` },
+      { label:'ROUTER',  pill:`<div class="j-pill ${e.route_taken==='escalate'?'jp-yellow':'jp-green'}">${e.route_taken==='escalate'?'ESCALATE':'AUTO-HANDLE'}</div>` },
+    ];
+    if (e.route_taken==='escalate') {
+      const g1cls = e.engineer_gate1_decision==='confirmed' ? 'jp-green' : e.engineer_gate1_decision==='rejected' ? 'jp-red' : 'jp-yellow';
+      steps.push({ label:'GATE 1', pill:`<div class="j-pill ${g1cls}">${(e.engineer_gate1_decision||'—').toUpperCase()}</div>` });
+      steps.push({ label:'PATCH',  pill:`<div class="j-pill jp-blue">PATCH</div>` });
+      const g2cls = e.engineer_gate2_decision==='approved' ? 'jp-green' : e.engineer_gate2_decision==='rejected' ? 'jp-red' : 'jp-yellow';
+      steps.push({ label:'GATE 2', pill:`<div class="j-pill ${g2cls}">${(e.engineer_gate2_decision||'—').toUpperCase()}</div>` });
+      steps.push({ label:'SANDBOX', pill:`<div class="j-pill ${e.sandbox_result==='pass'?'jp-green':'jp-red'}">${(e.sandbox_result||'—').toUpperCase()}</div>` });
+    }
+    const outCls = (e.outcome==='deployed'||e.outcome==='auto-resolved') ? 'jp-green' : 'jp-red';
+    steps.push({ label:'OUTCOME', pill:`<div class="j-pill ${outCls}">${(e.outcome||'—').toUpperCase()}</div>` });
+
+    const journeyHTML = steps.map((s,i)=>`
+      <div class="j-node">
+        ${s.pill}
+        <div class="j-lbl">${s.label}</div>
+      </div>
+      ${i<steps.length-1 ? '<div class="j-arrow">→</div>' : ''}
+    `).join('');
+
+    document.getElementById('latest-card').innerHTML = `
+      <div class="incident-card">
+        <div class="inc-header">
+          <div class="inc-id">${e.alert_id||'—'}</div>
+          ${riskBadge(e.risk_level)}
+          ${freshBadge(e.freshness)}
+          ${outcomeBadge(e.outcome)}
+        </div>
+
+        <div class="journey">${journeyHTML}</div>
+
+        <div class="inc-meta">
+          <div class="meta-cell">
+            <div class="meta-lbl">Gate 1</div>
+            <div class="meta-val">${gateBadge(e.engineer_gate1_decision)}</div>
+          </div>
+          <div class="meta-cell">
+            <div class="meta-lbl">Gate 2</div>
+            <div class="meta-val">${gateBadge(e.engineer_gate2_decision)}</div>
+          </div>
+          <div class="meta-cell">
+            <div class="meta-lbl">Approver</div>
+            <div class="meta-val" style="color:var(--blue)">${e.approved_by||'—'}</div>
+          </div>
+          <div class="meta-cell">
+            <div class="meta-lbl">Sandbox</div>
+            <div class="meta-val">${sandboxBadge(e.sandbox_result)}</div>
+          </div>
+        </div>
+
+        ${e.ai_hypothesis ? `
+          <div class="hypothesis-wrap">
+            <div class="hyp-label">AI Hypothesis</div>
+            <div class="hyp-text">"${e.ai_hypothesis}"</div>
+          </div>
+        ` : ''}
+        ${e.notes ? `<div class="inc-notes">${e.notes}</div>` : ''}
+      </div>
+    `;
+  }
+
+  /* ── Audit table ────────────────────────────────────── */
+  function renderTable(entries) {
+    document.getElementById('audit-count').textContent = entries.length+' ENTRIES';
+    if (!entries.length) {
+      document.getElementById('tbody').innerHTML =
+        '<tr><td colspan="10" class="empty">No incidents yet. Run <code>python main.py</code></td></tr>';
+      return;
+    }
+    const rev = [...entries].reverse();
+    document.getElementById('tbody').innerHTML = rev.map((e,i)=>`
+      <tr class="${i===0?'row-latest':''}">
+        <td>${fmt(e.timestamp)}</td>
+        <td style="font-weight:700;color:var(--text)">${e.alert_id||'—'}</td>
+        <td>${riskBadge(e.risk_level)}</td>
+        <td>${freshBadge(e.freshness)}</td>
+        <td>${routeBadge(e.route_taken)}</td>
+        <td>${gateBadge(e.engineer_gate1_decision)}</td>
+        <td>${gateBadge(e.engineer_gate2_decision)}</td>
+        <td style="color:var(--blue)">${e.approved_by||'—'}</td>
+        <td>${sandboxBadge(e.sandbox_result)}</td>
+        <td>${outcomeBadge(e.outcome)}</td>
+      </tr>
+    `).join('');
+  }
+
+  /* ── Data refresh ───────────────────────────────────── */
+  async function refresh() {
+    try {
+      const res = await fetch('/api/audit');
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      renderKPIs(data);
+      renderLatest(data);
+      renderTable(data);
+    } catch (err) {
+      console.warn('Refresh error:', err);
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 3000);
+</script>
+</body>
+</html>
