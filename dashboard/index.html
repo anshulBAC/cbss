@@ -216,6 +216,33 @@
     .pip-node.n-green  { border-color: var(--green);  color: var(--green);  background: var(--green-glow); }
     .pip-node.n-purple { border-color: var(--purple); color: var(--purple); background: var(--pur-glow);   }
 
+    /* ── Live stage states ───────────────────────────────── */
+    /* Current active stage — cyan pulse */
+    .pip-node.stage-current {
+      border-color: #22d3ee !important;
+      color: #22d3ee !important;
+      background: rgba(34,211,238,0.12) !important;
+      box-shadow: 0 0 0 2px rgba(34,211,238,0.2), 0 0 14px rgba(34,211,238,0.25);
+      animation: stage-pulse 2s ease-in-out infinite;
+    }
+    @keyframes stage-pulse {
+      0%,100% { box-shadow: 0 0 0 2px rgba(34,211,238,0.2), 0 0 10px rgba(34,211,238,0.2); }
+      50%      { box-shadow: 0 0 0 3px rgba(34,211,238,0.35), 0 0 22px rgba(34,211,238,0.4); }
+    }
+    /* Completed stages — dim green tick */
+    .pip-node.stage-done {
+      border-color: rgba(16,185,129,0.45) !important;
+      color: rgba(16,185,129,0.65) !important;
+      background: rgba(16,185,129,0.06) !important;
+    }
+    /* Stages not yet reached — faded */
+    .pip-node.stage-inactive {
+      opacity: 0.28;
+      filter: grayscale(0.5);
+    }
+    /* Arrow dims when downstream is inactive */
+    .pip-arrow.stage-inactive { opacity: 0.2; }
+
     .pip-arrow { color: var(--border-2); padding: 0 8px; font-size: 15px; user-select: none; }
 
     .pip-fork {
@@ -541,20 +568,20 @@
     <div class="section" style="margin-bottom:0">
       <div class="section-title">
         <span>Pipeline</span>
-        <span class="s-badge">9 STAGES</span>
+        <span class="s-badge" id="pipeline-stage-badge">9 STAGES</span>
       </div>
       <div class="pipeline-box">
         <!-- Row 1: shared stages -->
         <div class="pip-row">
-          <div class="pip-node n-blue">ALERT<span class="sub">trigger</span></div>
-          <div class="pip-arrow">──►</div>
-          <div class="pip-node n-blue">CONTEXT<span class="sub">ingestion</span></div>
-          <div class="pip-arrow">──►</div>
-          <div class="pip-node n-blue">RISK SCORE<span class="sub">classifier</span></div>
-          <div class="pip-arrow">──►</div>
-          <div class="pip-node n-blue">FRESHNESS<span class="sub">scorer</span></div>
-          <div class="pip-arrow">──►</div>
-          <div class="pip-node n-blue">ROUTER<span class="sub">decision</span></div>
+          <div class="pip-node n-blue" data-stage="alert">ALERT<span class="sub">trigger</span></div>
+          <div class="pip-arrow" data-after="alert">──►</div>
+          <div class="pip-node n-blue" data-stage="context">CONTEXT<span class="sub">ingestion</span></div>
+          <div class="pip-arrow" data-after="context">──►</div>
+          <div class="pip-node n-blue" data-stage="risk">RISK SCORE<span class="sub">classifier</span></div>
+          <div class="pip-arrow" data-after="risk">──►</div>
+          <div class="pip-node n-blue" data-stage="freshness">FRESHNESS<span class="sub">scorer</span></div>
+          <div class="pip-arrow" data-after="freshness">──►</div>
+          <div class="pip-node n-blue" data-stage="router">ROUTER<span class="sub">decision</span></div>
         </div>
 
         <!-- Fork annotation -->
@@ -568,15 +595,15 @@
 
         <!-- Row 2: escalation path -->
         <div class="pip-row">
-          <div class="pip-node n-yellow">GATE 1<span class="sub">human ✋</span></div>
-          <div class="pip-arrow">──►</div>
-          <div class="pip-node n-blue">PATCH GEN<span class="sub">GPT-4.1</span></div>
-          <div class="pip-arrow">──►</div>
-          <div class="pip-node n-yellow">GATE 2<span class="sub">human ✋</span></div>
-          <div class="pip-arrow">──►</div>
-          <div class="pip-node n-blue">SANDBOX<span class="sub">validation</span></div>
-          <div class="pip-arrow">──►</div>
-          <div class="pip-node n-green">DEPLOY<span class="sub">+ audit log</span></div>
+          <div class="pip-node n-yellow" data-stage="gate1">GATE 1<span class="sub">human ✋</span></div>
+          <div class="pip-arrow" data-after="gate1">──►</div>
+          <div class="pip-node n-blue" data-stage="patch">PATCH GEN<span class="sub">GPT-4.1</span></div>
+          <div class="pip-arrow" data-after="patch">──►</div>
+          <div class="pip-node n-yellow" data-stage="gate2">GATE 2<span class="sub">human ✋</span></div>
+          <div class="pip-arrow" data-after="gate2">──►</div>
+          <div class="pip-node n-blue" data-stage="sandbox">SANDBOX<span class="sub">validation</span></div>
+          <div class="pip-arrow" data-after="sandbox">──►</div>
+          <div class="pip-node n-green" data-stage="deploy">DEPLOY<span class="sub">+ audit log</span></div>
         </div>
       </div>
     </div>
@@ -898,6 +925,83 @@
   }
 
   /* ── Data refresh ───────────────────────────────────── */
+  /* ── Pipeline stage highlighter ────────────────────────── */
+  // Stage order for each path
+  const COMMON   = ['alert','context','risk','freshness','router'];
+  const ESC_PATH = ['gate1','patch','gate2','sandbox','deploy'];
+  const ALL_ESC  = [...COMMON, ...ESC_PATH];
+  const ALL_AUTO = [...COMMON]; // auto-handle doesn't reach row-2 nodes
+
+  function resolveCurrentStage(entry) {
+    if (!entry) return null;
+    if (entry.outcome === 'deployed')      return 'deploy';
+    if (entry.outcome === 'auto-resolved') return 'router'; // terminal for auto path
+    if (entry.sandbox_result === 'fail')   return 'sandbox';
+    if (entry.engineer_gate2_decision === 'approved') return 'sandbox';
+    if (entry.engineer_gate2_decision === 'rejected') return 'gate2';
+    if (entry.engineer_gate1_decision === 'confirmed') return 'patch';
+    if (entry.engineer_gate1_decision === 'rejected')  return 'gate1';
+    if (entry.route_taken === 'escalate')  return 'gate1';
+    return 'router';
+  }
+
+  function renderPipeline(entries) {
+    const entry  = entries.length ? entries[entries.length - 1] : null;
+    const current = resolveCurrentStage(entry);
+    const isAuto  = entry && entry.route_taken === 'auto-handle';
+
+    // Build ordered list of stages that are "done" (before current)
+    const path    = isAuto ? ALL_AUTO : ALL_ESC;
+    const curIdx  = current ? path.indexOf(current) : -1;
+    const done    = curIdx > 0 ? path.slice(0, curIdx) : [];
+
+    // Apply classes to every [data-stage] node
+    document.querySelectorAll('[data-stage]').forEach(el => {
+      const s = el.dataset.stage;
+      el.classList.remove('stage-current','stage-done','stage-inactive');
+
+      // Row-2 nodes are always inactive for auto-handle path
+      const inPath = path.includes(s);
+      if (!entry || !current) { el.classList.add('stage-inactive'); return; }
+
+      if (s === current)      el.classList.add('stage-current');
+      else if (done.includes(s)) el.classList.add('stage-done');
+      else if (!inPath)       el.classList.add('stage-inactive');
+      else                    el.classList.add('stage-inactive'); // future stages
+    });
+
+    // Dim arrows that lead into inactive/future nodes
+    document.querySelectorAll('[data-after]').forEach(el => {
+      const s      = el.dataset.after;
+      const nextIdx = path.indexOf(s) + 1;
+      const next   = path[nextIdx];
+      el.classList.remove('stage-inactive');
+      if (!entry || !current) { el.classList.add('stage-inactive'); return; }
+      if (!next || (!done.includes(s) && s !== current)) {
+        el.classList.add('stage-inactive');
+      }
+    });
+
+    // Update section badge to show current stage label
+    const labels = {
+      alert:'ALERT', context:'CONTEXT', risk:'RISK SCORE', freshness:'FRESHNESS',
+      router: isAuto ? 'AUTO-HANDLE' : 'ROUTER',
+      gate1:'GATE 1', patch:'PATCH GEN', gate2:'GATE 2',
+      sandbox:'SANDBOX', deploy:'DEPLOYED'
+    };
+    const badge = document.getElementById('pipeline-stage-badge');
+    if (badge && current) {
+      badge.textContent = '● ' + (labels[current] || current.toUpperCase());
+      badge.style.color = current === 'deploy' ? 'var(--green)'
+                        : current === 'sandbox' ? 'var(--blue)'
+                        : (current === 'gate1' || current === 'gate2') ? 'var(--yellow)'
+                        : '#22d3ee';
+      badge.style.borderColor = badge.style.color;
+      badge.style.background = 'transparent';
+    }
+  }
+
+  /* ── Data refresh ───────────────────────────────────────── */
   async function refresh() {
     try {
       const res = await fetch('/api/audit');
@@ -906,6 +1010,7 @@
       renderKPIs(data);
       renderLatest(data);
       renderTable(data);
+      renderPipeline(data);
     } catch (err) {
       console.warn('Refresh error:', err);
     }
