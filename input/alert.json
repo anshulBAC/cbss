@@ -5,10 +5,7 @@
     "service": "auth-service",
     "severity": "HIGH",
     "error": "Connection pool exhaustion — p99 latency spike to 4200ms",
-    "affected_files": [
-      "src/db/connection.py",
-      "src/auth/session.py"
-    ],
+    "affected_files": ["src/db/connection.py", "src/auth/session.py"],
     "environment": "production"
   },
   {
@@ -17,10 +14,7 @@
     "service": "reporting-service",
     "severity": "MEDIUM",
     "error": "Intermittent timeout when generating monthly usage reports",
-    "affected_files": [
-      "src/reports/generator.py",
-      "src/utils/cache_layer.py"
-    ],
+    "affected_files": ["src/reports/generator.py", "src/utils/cache_layer.py"],
     "environment": "production"
   },
   {
@@ -29,9 +23,16 @@
     "service": "notification-service",
     "severity": "LOW",
     "error": "Deprecated config flag detected — fallback mode engaged",
-    "affected_files": [
-      "src/config/flags.py"
-    ],
+    "affected_files": ["src/config/flags.py"],
     "environment": "staging"
+  },
+  {
+    "id": "alert-004",
+    "timestamp": "2025-03-02T14:00:00Z",
+    "service": "auth-service",
+    "severity": "HIGH",
+    "error": "Session token validation failures spiking — 23% of login requests returning 401",
+    "affected_files": ["src/auth/session.py", "src/db/connection.py", "src/auth/token_validator.py"],
+    "environment": "production"
   }
 ]
