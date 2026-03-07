@@ -79,6 +79,17 @@ audit/
 | 1     | reporting-service    | MEDIUM   | production  | escalate    |
 | 2     | notification-service | LOW      | staging     | auto-handle |
 
+## Auto-Handle Rationale
+
+Low-risk + fresh-context incidents are auto-resolved without a human gate. This is safe because:
+
+- **Risk classifier** confirms no auth, payment, or cross-service blast radius
+- **Freshness check** verifies a recent human review (< 7 days) and low commit churn
+- **Cumulative risk is bounded** — each low-risk patch touches an isolated service by definition
+- **Full audit trail** is written to `audit_log.json` for every auto-resolution; engineers can review or override at any time
+
+Auto-resolutions are never silent. The pipeline prints an explicit justification panel and logs the full decision.
+
 ## Human Gates
 
 ### Gate 1 — Validate Diagnosis (~30 seconds)
@@ -95,3 +106,4 @@ Every pipeline run appends a structured entry to `audit_log.json` containing: al
 
 - `openai` — GPT-4.1 for diagnosis and patch generation
 - `python-dotenv` — loads `OPENAI_API_KEY` from `.env`
+- `rich` — colored terminal output, panels, and syntax highlighting

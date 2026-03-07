@@ -86,11 +86,17 @@ Point to:
 - Single file touched
 
 ### 2) Routing
-“Sentinel classifies this as low risk + fresh context.  
+“Sentinel classifies this as low risk + fresh context.
 No gates. No interruption. Auto-handled.”
 
+Point to the AUTO-HANDLE panel on screen:
+- Risk classifier confirmed: no auth, payment, or cross-service blast radius
+- Context freshness verified: reviewed recently, low churn
+- Full audit trail written — engineers can review or override at any time
+
 Say:
-“This is how we keep friction low. Humans intervene only when their input changes outcomes.”
+“This is how we keep friction low. Humans intervene only when their input changes outcomes.
+But auto-handle is never blind — every resolution is logged, justified, and reviewable.”
 
 ---
 
