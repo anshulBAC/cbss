@@ -1,10 +1,15 @@
 """
-Integration tests for Codex Guardian.
+Integration tests for Codex Guardian — Phase 2 updated.
 
-Tests the full scoring + routing chain, the diagnose → Gate 1 flow, and the
-patch → Gate 2 flow using mocked OpenAI responses and mocked CLI input.
+Covers:
+  - Full scoring + routing chain
+  - diagnose() with mocked OpenAI — including reasoning_chain validation
+  - generate_patch() with mocked OpenAI
+  - Gate 1 and Gate 2 flows
+  - _adapt_patch_for_gate2 adapter
+  - context_freshness_warning deterministic override
 
-No real API key required — all external calls are intercepted.
+No real API key required — all OpenAI calls are mocked.
 """
 
 import sys
@@ -81,6 +86,11 @@ STALE_GIT_HISTORY = {
     "last_reviewed_days_ago": 20,
 }
 
+EMPTY_GIT_HISTORY = {
+    "recent_commits": [],
+    "last_reviewed_days_ago": 5,
+}
+
 SAMPLE_CONTEXT_BUNDLE = {
     "alert": HIGH_RISK_ALERT,
     "git_history": FRESH_GIT_HISTORY,
@@ -96,7 +106,6 @@ SAMPLE_CONTEXT_BUNDLE = {
 # ── Routing Integration Tests ─────────────────────────────────────────────────
 
 class TestRoutingIntegration(unittest.TestCase):
-    """Verify the scoring + routing chain produces the correct route for each scenario."""
 
     def _run_routing(self, alert, deps, git_history):
         from scoring.risk_score import score_risk
@@ -148,45 +157,120 @@ class TestRoutingIntegration(unittest.TestCase):
             self.assertIn(key, result)
 
 
-# ── Diagnosis + Gate 1 Integration Tests ─────────────────────────────────────
+# ── Diagnosis Tests ───────────────────────────────────────────────────────────
 
-class TestDiagnosisGate1Integration(unittest.TestCase):
-    """Test diagnose() with mocked OpenAI, then feed result into run_gate1()."""
+class TestDiagnosisIntegration(unittest.TestCase):
 
-    def _mock_openai_response(self, data):
+    def _mock_openai(self, data):
         mock_response = MagicMock()
         mock_response.choices[0].message.content = json.dumps(data)
-        return mock_response
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        return mock_client
+
+    # --- Shape and content ---
 
     def test_diagnose_returns_hypotheses_from_fixture(self):
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = (
-            self._mock_openai_response(MOCK_DIAGNOSIS)
-        )
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_DIAGNOSIS)):
             from codex.diagnose import diagnose
             result = diagnose(SAMPLE_CONTEXT_BUNDLE)
-
         self.assertIn("hypotheses", result)
         self.assertEqual(len(result["hypotheses"]), 2)
         self.assertEqual(result["hypotheses"][0]["id"], 1)
         self.assertAlmostEqual(result["hypotheses"][0]["confidence"], 0.85)
 
     def test_diagnose_returns_freshness_warning_flag(self):
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = (
-            self._mock_openai_response(MOCK_DIAGNOSIS)
-        )
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_DIAGNOSIS)):
             from codex.diagnose import diagnose
             result = diagnose(SAMPLE_CONTEXT_BUNDLE)
-
         self.assertIn("context_freshness_warning", result)
         self.assertIsInstance(result["context_freshness_warning"], bool)
 
+    # --- reasoning_chain contract (new) ---
+
+    def test_diagnose_returns_reasoning_chain(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_DIAGNOSIS)):
+            from codex.diagnose import diagnose
+            result = diagnose(SAMPLE_CONTEXT_BUNDLE)
+        self.assertIn("reasoning_chain", result)
+        self.assertIsInstance(result["reasoning_chain"], list)
+
+    def test_reasoning_chain_has_minimum_steps(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_DIAGNOSIS)):
+            from codex.diagnose import diagnose
+            result = diagnose(SAMPLE_CONTEXT_BUNDLE)
+        self.assertGreaterEqual(len(result["reasoning_chain"]), 2)
+
+    def test_reasoning_chain_steps_have_required_keys(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_DIAGNOSIS)):
+            from codex.diagnose import diagnose
+            result = diagnose(SAMPLE_CONTEXT_BUNDLE)
+        for step in result["reasoning_chain"]:
+            for key in ("step", "observation", "inference", "evidence"):
+                self.assertIn(key, step, f"reasoning_chain step missing key: '{key}'")
+
+    def test_reasoning_chain_steps_are_numbered_sequentially(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_DIAGNOSIS)):
+            from codex.diagnose import diagnose
+            result = diagnose(SAMPLE_CONTEXT_BUNDLE)
+        steps = [s["step"] for s in result["reasoning_chain"]]
+        self.assertEqual(steps, list(range(1, len(steps) + 1)))
+
+    def test_reasoning_chain_evidence_fields_are_strings(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_DIAGNOSIS)):
+            from codex.diagnose import diagnose
+            result = diagnose(SAMPLE_CONTEXT_BUNDLE)
+        for step in result["reasoning_chain"]:
+            self.assertIsInstance(step["evidence"], str)
+            self.assertGreater(len(step["evidence"]), 0)
+
+    def test_reasoning_chain_fixture_cites_specific_fields(self):
+        # Verify the fixture itself uses specific field paths, not generic references
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_DIAGNOSIS)):
+            from codex.diagnose import diagnose
+            result = diagnose(SAMPLE_CONTEXT_BUNDLE)
+        evidence_fields = [s["evidence"] for s in result["reasoning_chain"]]
+        # At least one step should reference git_history
+        self.assertTrue(any("git_history" in e for e in evidence_fields))
+        # At least one step should reference alert or dependencies or org_context
+        self.assertTrue(
+            any(any(src in e for src in ("alert", "dependencies", "org_context"))
+                for e in evidence_fields)
+        )
+
+    # --- context_freshness_warning deterministic override ---
+
+    def test_freshness_warning_overridden_true_when_stale(self):
+        # Model returns False, but deterministic check should flip it to True
+        stale_response = dict(MOCK_DIAGNOSIS, context_freshness_warning=False)
+        stale_bundle = dict(
+            SAMPLE_CONTEXT_BUNDLE,
+            git_history=STALE_GIT_HISTORY,
+        )
+        with patch("openai.OpenAI", return_value=self._mock_openai(stale_response)):
+            from codex.diagnose import diagnose
+            result = diagnose(stale_bundle)
+        self.assertTrue(result["context_freshness_warning"])
+
+    def test_freshness_warning_true_when_no_commits(self):
+        empty_bundle = dict(SAMPLE_CONTEXT_BUNDLE, git_history=EMPTY_GIT_HISTORY)
+        response = dict(MOCK_DIAGNOSIS, context_freshness_warning=False)
+        with patch("openai.OpenAI", return_value=self._mock_openai(response)):
+            from codex.diagnose import diagnose
+            result = diagnose(empty_bundle)
+        self.assertTrue(result["context_freshness_warning"])
+
+    def test_freshness_warning_false_when_fresh(self):
+        response = dict(MOCK_DIAGNOSIS, context_freshness_warning=False)
+        with patch("openai.OpenAI", return_value=self._mock_openai(response)):
+            from codex.diagnose import diagnose
+            result = diagnose(SAMPLE_CONTEXT_BUNDLE)
+        self.assertFalse(result["context_freshness_warning"])
+
+    # --- Error handling ---
+
     def test_diagnose_raises_on_bad_json(self):
         mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = MagicMock()
         mock_client.chat.completions.create.return_value.choices[0].message.content = (
             "not json at all"
         )
@@ -196,174 +280,318 @@ class TestDiagnosisGate1Integration(unittest.TestCase):
                 diagnose(SAMPLE_CONTEXT_BUNDLE)
 
     def test_diagnose_raises_on_missing_hypotheses_key(self):
-        bad_response = {"context_freshness_warning": False}  # missing "hypotheses"
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = (
-            self._mock_openai_response(bad_response)
-        )
-        with patch("openai.OpenAI", return_value=mock_client):
+        bad = {"context_freshness_warning": False, "reasoning_chain": []}
+        with patch("openai.OpenAI", return_value=self._mock_openai(bad)):
             from codex.diagnose import diagnose
             with self.assertRaises(RuntimeError):
                 diagnose(SAMPLE_CONTEXT_BUNDLE)
 
+    def test_diagnose_raises_on_missing_reasoning_chain(self):
+        bad = {"hypotheses": MOCK_DIAGNOSIS["hypotheses"], "context_freshness_warning": False}
+        with patch("openai.OpenAI", return_value=self._mock_openai(bad)):
+            from codex.diagnose import diagnose
+            with self.assertRaises(RuntimeError):
+                diagnose(SAMPLE_CONTEXT_BUNDLE)
+
+    def test_diagnose_raises_when_chain_too_short(self):
+        bad = dict(MOCK_DIAGNOSIS, reasoning_chain=[
+            {"step": 1, "observation": "x", "inference": "y", "evidence": "alert.error"}
+        ])
+        with patch("openai.OpenAI", return_value=self._mock_openai(bad)):
+            from codex.diagnose import diagnose
+            with self.assertRaises(RuntimeError):
+                diagnose(SAMPLE_CONTEXT_BUNDLE)
+
+    def test_diagnose_raises_when_chain_step_missing_key(self):
+        bad = dict(MOCK_DIAGNOSIS, reasoning_chain=[
+            {"step": 1, "observation": "x", "inference": "y"},   # missing 'evidence'
+            {"step": 2, "observation": "a", "inference": "b", "evidence": "alert.id"},
+        ])
+        with patch("openai.OpenAI", return_value=self._mock_openai(bad)):
+            from codex.diagnose import diagnose
+            with self.assertRaises(RuntimeError):
+                diagnose(SAMPLE_CONTEXT_BUNDLE)
+
+    # --- Gate 1 integration ---
+
     def test_gate1_confirm_after_diagnose(self):
-        """Full flow: diagnose → engineer confirms hypothesis 1."""
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = (
-            self._mock_openai_response(MOCK_DIAGNOSIS)
-        )
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_DIAGNOSIS)):
             from codex.diagnose import diagnose
             diagnosis_result = diagnose(SAMPLE_CONTEXT_BUNDLE)
-
         from gates.gate1_ui import run_gate1
         with patch("builtins.input", side_effect=["@engineer", "1"]):
             gate1_result = run_gate1(diagnosis_result)
-
         self.assertEqual(gate1_result["decision"], "confirmed")
         self.assertEqual(gate1_result["selected_hypothesis_id"], 1)
 
-    def test_gate1_rejection_with_correction_after_diagnose(self):
-        """Engineer rejects AI diagnosis and injects their own context."""
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = (
-            self._mock_openai_response(MOCK_DIAGNOSIS)
-        )
-        with patch("openai.OpenAI", return_value=mock_client):
+    def test_gate1_rejection_injects_correction_into_context(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_DIAGNOSIS)):
             from codex.diagnose import diagnose
             diagnosis_result = diagnose(SAMPLE_CONTEXT_BUNDLE)
-
         from gates.gate1_ui import run_gate1
         with patch("builtins.input", side_effect=["@engineer", "r", "Redis OOM — saw it in logs"]):
             gate1_result = run_gate1(diagnosis_result)
-
         self.assertEqual(gate1_result["decision"], "rejected")
-        self.assertEqual(gate1_result["correction"], "Redis OOM — saw it in logs")
-
-        # Verify the correction can be injected back into context bundle
         bundle = dict(SAMPLE_CONTEXT_BUNDLE)
         bundle["org_context"]["injected_context"].append(
             f"[Gate 1 engineer correction] {gate1_result['correction']}"
         )
         self.assertIn(
             "[Gate 1 engineer correction] Redis OOM — saw it in logs",
-            bundle["org_context"]["injected_context"]
+            bundle["org_context"]["injected_context"],
+        )
+
+    def test_injected_compliance_context_present_in_user_prompt(self):
+        # Verify injected_context flows into the prompt string
+        bundle = dict(SAMPLE_CONTEXT_BUNDLE)
+        bundle["org_context"] = dict(bundle["org_context"])
+        bundle["org_context"]["injected_context"] = ["Freeze window active until Friday"]
+
+        captured_prompts = []
+
+        def capture_create(**kwargs):
+            captured_prompts.append(kwargs["messages"][1]["content"])
+            mock_response = MagicMock()
+            mock_response.choices[0].message.content = json.dumps(MOCK_DIAGNOSIS)
+            return mock_response
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = capture_create
+
+        with patch("openai.OpenAI", return_value=mock_client):
+            from codex.diagnose import diagnose
+            diagnose(bundle)
+
+        self.assertTrue(
+            any("Freeze window active until Friday" in p for p in captured_prompts),
+            "injected_context should appear in the user prompt sent to OpenAI",
         )
 
 
 # ── Patch Generation + Gate 2 Integration Tests ───────────────────────────────
 
 class TestPatchGate2Integration(unittest.TestCase):
-    """Test generate_patch() with mocked OpenAI, then feed into run_gate2()."""
 
-    def _mock_openai_response(self, data):
+    def _mock_openai(self, data):
         mock_response = MagicMock()
         mock_response.choices[0].message.content = json.dumps(data)
-        return mock_response
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        return mock_client
 
     def _confirmed_hypothesis(self):
         return MOCK_DIAGNOSIS["hypotheses"][0]
 
     def test_generate_patch_returns_required_fields(self):
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = (
-            self._mock_openai_response(MOCK_PATCH)
-        )
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
             from codex.patch import generate_patch
             result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
-
         for field in ["diff", "explanation", "blast_radius", "confidence", "affected_services"]:
             self.assertIn(field, result)
 
     def test_generate_patch_diff_is_string(self):
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = (
-            self._mock_openai_response(MOCK_PATCH)
-        )
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
             from codex.patch import generate_patch
             result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
-
         self.assertIsInstance(result["diff"], str)
         self.assertGreater(len(result["diff"]), 0)
 
     def test_generate_patch_affected_services_is_list(self):
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = (
-            self._mock_openai_response(MOCK_PATCH)
-        )
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
             from codex.patch import generate_patch
             result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
-
         self.assertIsInstance(result["affected_services"], list)
 
     def test_generate_patch_raises_on_missing_field(self):
-        bad_patch = {"diff": "--- a/file", "explanation": "fix"}  # missing fields
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = (
-            self._mock_openai_response(bad_patch)
-        )
-        with patch("openai.OpenAI", return_value=mock_client):
+        bad_patch = {"diff": "--- a/file", "explanation": "fix"}
+        with patch("openai.OpenAI", return_value=self._mock_openai(bad_patch)):
             from codex.patch import generate_patch
             with self.assertRaises(RuntimeError):
                 generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
 
     def test_gate2_approve_after_patch_generation(self):
-        """Full flow: generate_patch → adapt for gate2 → engineer approves."""
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = (
-            self._mock_openai_response(MOCK_PATCH)
-        )
-        with patch("openai.OpenAI", return_value=mock_client):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
             from codex.patch import generate_patch
             patch_proposal = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
-
         from main import _adapt_patch_for_gate2
         from gates.gate2_ui import run_gate2
         adapted = _adapt_patch_for_gate2(patch_proposal)
-
         with patch("builtins.input", side_effect=["@engineer", "approve", "low traffic window"]):
             gate2_result = run_gate2(adapted)
-
         self.assertEqual(gate2_result["decision"], "approved")
         self.assertEqual(gate2_result["rationale"], "low traffic window")
 
-    def test_gate2_reject_injects_feedback_into_context(self):
-        """Engineer rejects patch; feedback is added to org context for next attempt."""
+    # --- reasoning_chain contract (new) ---
+
+    def test_patch_returns_reasoning_chain(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
+            from codex.patch import generate_patch
+            result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+        self.assertIn("reasoning_chain", result)
+        self.assertIsInstance(result["reasoning_chain"], list)
+
+    def test_patch_reasoning_chain_minimum_steps(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
+            from codex.patch import generate_patch
+            result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+        self.assertGreaterEqual(len(result["reasoning_chain"]), 2)
+
+    def test_patch_reasoning_chain_steps_have_required_keys(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
+            from codex.patch import generate_patch
+            result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+        for step in result["reasoning_chain"]:
+            for key in ("step", "observation", "decision", "trade_off"):
+                self.assertIn(key, step, f"reasoning_chain step missing key: '{key}'")
+
+    def test_patch_reasoning_chain_numbered_sequentially(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
+            from codex.patch import generate_patch
+            result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+        steps = [s["step"] for s in result["reasoning_chain"]]
+        self.assertEqual(steps, list(range(1, len(steps) + 1)))
+
+    def test_patch_reasoning_chain_trade_off_is_non_empty(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
+            from codex.patch import generate_patch
+            result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+        for step in result["reasoning_chain"]:
+            self.assertGreater(len(step["trade_off"]), 0,
+                "trade_off should never be empty — AI must acknowledge risk")
+
+    # --- compliance_check contract (new) ---
+
+    def test_patch_returns_compliance_check(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
+            from codex.patch import generate_patch
+            result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+        self.assertIn("compliance_check", result)
+
+    def test_compliance_check_has_required_keys(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
+            from codex.patch import generate_patch
+            result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+        cc = result["compliance_check"]
+        for key in ("flags_reviewed", "assessment", "patch_is_compliant"):
+            self.assertIn(key, cc, f"compliance_check missing key: '{key}'")
+
+    def test_compliance_check_flags_reviewed_is_list(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
+            from codex.patch import generate_patch
+            result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+        self.assertIsInstance(result["compliance_check"]["flags_reviewed"], list)
+
+    def test_compliance_check_patch_is_compliant_is_bool(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
+            from codex.patch import generate_patch
+            result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+        self.assertIsInstance(result["compliance_check"]["patch_is_compliant"], bool)
+
+    def test_compliance_check_assessment_is_non_empty_string(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
+            from codex.patch import generate_patch
+            result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+        self.assertIsInstance(result["compliance_check"]["assessment"], str)
+        self.assertGreater(len(result["compliance_check"]["assessment"]), 0)
+
+    def test_patch_raises_when_reasoning_chain_too_short(self):
+        bad = dict(MOCK_PATCH, reasoning_chain=[
+            {"step": 1, "observation": "x", "decision": "y", "trade_off": "z"}
+        ])
+        with patch("openai.OpenAI", return_value=self._mock_openai(bad)):
+            from codex.patch import generate_patch
+            with self.assertRaises(RuntimeError):
+                generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+
+    def test_patch_raises_when_chain_step_missing_key(self):
+        bad = dict(MOCK_PATCH, reasoning_chain=[
+            {"step": 1, "observation": "x", "decision": "y"},  # missing trade_off
+            {"step": 2, "observation": "a", "decision": "b", "trade_off": "c"},
+        ])
+        with patch("openai.OpenAI", return_value=self._mock_openai(bad)):
+            from codex.patch import generate_patch
+            with self.assertRaises(RuntimeError):
+                generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+
+    def test_patch_raises_when_compliance_check_missing(self):
+        bad = {k: v for k, v in MOCK_PATCH.items() if k != "compliance_check"}
+        with patch("openai.OpenAI", return_value=self._mock_openai(bad)):
+            from codex.patch import generate_patch
+            with self.assertRaises(RuntimeError):
+                generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+
+    def test_patch_raises_when_compliance_check_key_missing(self):
+        bad = dict(MOCK_PATCH)
+        bad["compliance_check"] = {"flags_reviewed": [], "assessment": "ok"}  # missing patch_is_compliant
+        with patch("openai.OpenAI", return_value=self._mock_openai(bad)):
+            from codex.patch import generate_patch
+            with self.assertRaises(RuntimeError):
+                generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+
+    def test_compliance_flags_populated_when_injected_context_present(self):
+        # When injected_context has restrictions, fixture should reflect them
+        # Here we test a variant fixture where flags are populated
+        flagged_patch = dict(MOCK_PATCH)
+        flagged_patch["compliance_check"] = {
+            "flags_reviewed": ["Freeze window active until Friday", "2-person approval required"],
+            "assessment": "Patch is compliant. Freeze window applies to deployments not to config changes. 2-person approval is enforced at Gate 2.",
+            "patch_is_compliant": True,
+        }
+        with patch("openai.OpenAI", return_value=self._mock_openai(flagged_patch)):
+            from codex.patch import generate_patch
+            result = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+        self.assertEqual(len(result["compliance_check"]["flags_reviewed"]), 2)
+
+    def test_injected_feedback_present_in_patch_user_prompt(self):
+        bundle = dict(SAMPLE_CONTEXT_BUNDLE)
+        bundle["org_context"] = dict(bundle["org_context"])
+        bundle["org_context"]["injected_context"] = [
+            "[Gate 2 engineer feedback on rejected patch] reduce blast radius — only touch connection.py"
+        ]
+
+        captured_prompts = []
+
+        def capture_create(**kwargs):
+            captured_prompts.append(kwargs["messages"][1]["content"])
+            mock_response = MagicMock()
+            mock_response.choices[0].message.content = json.dumps(MOCK_PATCH)
+            return mock_response
+
         mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = (
-            self._mock_openai_response(MOCK_PATCH)
-        )
+        mock_client.chat.completions.create.side_effect = capture_create
+
         with patch("openai.OpenAI", return_value=mock_client):
             from codex.patch import generate_patch
-            patch_proposal = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
+            generate_patch(self._confirmed_hypothesis(), bundle)
 
+        self.assertTrue(
+            any("reduce blast radius" in p for p in captured_prompts),
+            "Gate 2 rejection feedback should appear in the patch user prompt",
+        )
+
+    def test_gate2_reject_injects_feedback_into_context(self):
+        with patch("openai.OpenAI", return_value=self._mock_openai(MOCK_PATCH)):
+            from codex.patch import generate_patch
+            patch_proposal = generate_patch(self._confirmed_hypothesis(), SAMPLE_CONTEXT_BUNDLE)
         from main import _adapt_patch_for_gate2
         from gates.gate2_ui import run_gate2
         adapted = _adapt_patch_for_gate2(patch_proposal)
-
         with patch("builtins.input", side_effect=["@engineer", "reject", "peak hours — try 2am"]):
             gate2_result = run_gate2(adapted)
-
         self.assertEqual(gate2_result["decision"], "rejected")
-
-        # Verify feedback can be injected into context for next patch attempt
         bundle = dict(SAMPLE_CONTEXT_BUNDLE)
         bundle["org_context"]["injected_context"].append(
             f"[Gate 2 engineer feedback on rejected patch] {gate2_result['rationale']}"
         )
         self.assertIn(
             "[Gate 2 engineer feedback on rejected patch] peak hours — try 2am",
-            bundle["org_context"]["injected_context"]
+            bundle["org_context"]["injected_context"],
         )
 
 
 # ── Patch Adapter Tests ───────────────────────────────────────────────────────
 
 class TestPatchAdapter(unittest.TestCase):
-    """Test the _adapt_patch_for_gate2 helper in main.py."""
 
     def test_adapter_wraps_blast_radius_string_into_dict(self):
         from main import _adapt_patch_for_gate2
@@ -376,19 +604,14 @@ class TestPatchAdapter(unittest.TestCase):
         }
         adapted = _adapt_patch_for_gate2(patch_proposal)
         self.assertIsInstance(adapted["blast_radius"], dict)
-        self.assertIn("level", adapted["blast_radius"])
-        self.assertIn("services_touched", adapted["blast_radius"])
-        self.assertIn("files_touched", adapted["blast_radius"])
-        self.assertIn("notes", adapted["blast_radius"])
+        for key in ("level", "services_touched", "files_touched", "notes"):
+            self.assertIn(key, adapted["blast_radius"])
 
     def test_adapter_maps_explanation_to_reasoning(self):
         from main import _adapt_patch_for_gate2
         patch_proposal = {
-            "diff": "--- a/file.py\n+++ b/file.py",
-            "explanation": "This is the explanation.",
-            "blast_radius": "minor",
-            "confidence": 0.5,
-            "affected_services": [],
+            "diff": "", "explanation": "This is the explanation.",
+            "blast_radius": "minor", "confidence": 0.5, "affected_services": [],
         }
         adapted = _adapt_patch_for_gate2(patch_proposal)
         self.assertEqual(adapted["reasoning"], "This is the explanation.")
@@ -407,11 +630,13 @@ class TestPatchAdapter(unittest.TestCase):
         from main import _adapt_patch_for_gate2
         patch_proposal = {
             "diff": "", "explanation": "", "blast_radius": "minor",
-            "confidence": 0.5,
-            "affected_services": ["auth-service", "api-gateway"],
+            "confidence": 0.5, "affected_services": ["auth-service", "api-gateway"],
         }
         adapted = _adapt_patch_for_gate2(patch_proposal)
-        self.assertEqual(adapted["blast_radius"]["services_touched"], ["auth-service", "api-gateway"])
+        self.assertEqual(
+            adapted["blast_radius"]["services_touched"],
+            ["auth-service", "api-gateway"],
+        )
 
 
 if __name__ == "__main__":

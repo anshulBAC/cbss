@@ -4,16 +4,54 @@
       "id": 1,
       "description": "Connection pool exhaustion caused by increased session timeout doubling concurrent connection duration",
       "confidence": 0.85,
-      "reasoning": "The recent commit 2 days ago by sarah.chen increased connection pool timeout from 30s to 60s. This doubles the duration each connection is held open, effectively halving pool capacity under the same load. Combined with the session cleanup refactor 5 days ago moving cleanup to a background worker, sessions may be lingering longer than intended.",
-      "uncertainty_flags": ["no real-time connection pool metrics available", "background worker queue depth unknown"]
+      "reasoning": "Commit a1b2c3d by sarah.chen 2 days ago increased POOL_TIMEOUT from 30s to 60s in src/db/connection.py. This doubles the duration each connection is held open, effectively halving pool capacity under the same load. Combined with auth-service being depended on by api-gateway, billing-service, and admin-dashboard, a pool saturation event produces cascading p99 latency across all three.",
+      "uncertainty_flags": [
+        "No real-time connection pool metrics available — cannot confirm current active connection count",
+        "Background worker queue depth unknown — cannot rule out worker backlog as a contributing factor"
+      ]
     },
     {
       "id": 2,
-      "description": "Background session cleanup worker is failing silently, causing session accumulation and pool saturation",
+      "description": "Background session cleanup worker failing silently, causing session accumulation and pool saturation",
       "confidence": 0.65,
-      "reasoning": "The refactor 5 days ago moved session cleanup to a background worker. If this worker is failing or delayed under load, sessions would accumulate and exhaust the pool. The timing aligns with when the latency spike could have started building.",
-      "uncertainty_flags": ["no worker health metrics provided", "no error logs available"]
+      "reasoning": "Commit e4f5g6h by james.okafor 5 days ago moved session cleanup to a background worker in src/auth/session.py. If this worker is failing or delayed under load, sessions would accumulate and exhaust the pool. The known constraint that connection pool max size is capped at 20 by infrastructure policy means even a small accumulation is sufficient to trigger exhaustion.",
+      "uncertainty_flags": [
+        "No worker health metrics provided — cannot confirm worker is actually lagging",
+        "No error logs available to distinguish pool exhaustion from slow query starvation"
+      ]
     }
   ],
-  "context_freshness_warning": false
+  "context_freshness_warning": false,
+  "reasoning_chain": [
+    {
+      "step": 1,
+      "observation": "Alert error message states 'Connection pool exhaustion — p99 latency spike to 4200ms' on auth-service in production",
+      "inference": "The primary symptom is pool-level resource exhaustion, not a query error or application logic failure. Root cause is most likely a configuration change or a resource leak, not a code logic bug.",
+      "evidence": "alert.error"
+    },
+    {
+      "step": 2,
+      "observation": "Commit a1b2c3d by sarah.chen 2 days ago changed POOL_TIMEOUT from 30s to 60s in src/db/connection.py",
+      "inference": "Doubling the timeout doubles the window each connection is held, which under constant load halves the effective pool throughput. This is a likely trigger for the exhaustion event.",
+      "evidence": "git_history.recent_commits[0]"
+    },
+    {
+      "step": 3,
+      "observation": "Commit e4f5g6h by james.okafor 5 days ago refactored session cleanup into a background worker in src/auth/session.py",
+      "inference": "If the background worker is under-provisioned or has a queue backlog, sessions would not be released promptly, compounding pool pressure from the timeout increase.",
+      "evidence": "git_history.recent_commits[1]"
+    },
+    {
+      "step": 4,
+      "observation": "known_constraints states connection pool max size is capped at 20 by infrastructure policy",
+      "inference": "A hard cap of 20 means the pool has very low headroom. A small increase in connection hold time or session accumulation is sufficient to push it to exhaustion under normal auth-service load.",
+      "evidence": "org_context.known_constraints[0]"
+    },
+    {
+      "step": 5,
+      "observation": "auth-service is depended on by api-gateway, billing-service, and admin-dashboard via shared postgres-primary and redis-cache infrastructure",
+      "inference": "Pool exhaustion on auth-service will propagate latency to all three downstream dependents. This elevates the blast radius beyond the single service and justifies HIGH risk classification.",
+      "evidence": "dependencies.depended_on_by"
+    }
+  ]
 }
