@@ -5,7 +5,7 @@ AI-assisted incident response with human-in-the-loop oversight.
 
 ## Overview
 
-Codex Guardian is a CLI pipeline that compresses production incidents into clarity. It uses GPT-4.1 to generate root cause hypotheses and patch proposals, but keeps human engineers in control at every escalation and deployment decision.
+Codex Guardian is a pipeline that compresses production incidents into clarity. It uses GPT-4.1 to generate root cause hypotheses and patch proposals, but keeps human engineers in control at every escalation and deployment decision. A browser-based command center provides real-time visibility into every pipeline run, routing decision, and gate outcome.
 
 ## Pipeline
 
@@ -33,6 +33,9 @@ Engineers can reject at Gate 1 (inject a correction → AI re-diagnoses) or Gate
 
 ```
 main.py                     # Pipeline orchestrator
+server.py                   # Dashboard HTTP server (localhost:8080)
+dashboard/
+  index.html                # Browser-based command center (live audit, KPIs, pipeline view)
 input/alert.json            # Sample alerts (HIGH / MEDIUM / LOW severity)
 context/
   bundle.py                 # Merges all three context sources
@@ -70,6 +73,23 @@ audit/
    python main.py        # Alert 0 — HIGH risk, auth-service (triggers both gates)
    python main.py 2      # Alert 2 — LOW risk, notification-service (auto-handled)
    ```
+4. (Optional) Start the dashboard in a second terminal:
+   ```
+   python server.py
+   # Open http://localhost:8080
+   ```
+
+## Dashboard
+
+`python server.py` starts a lightweight HTTP server at `http://localhost:8080`. The dashboard auto-refreshes every 3 seconds and shows:
+
+- **KPI strip** — total incidents, auto-resolved, escalated, human approvals, patch success rate
+- **Pipeline diagram** — visual 9-stage flow with escalation vs. auto-handle fork
+- **Routing Policy** — justification for why low-risk auto-resolution is safe
+- **Latest Incident** — full journey visualization (ALERT → GATE 1 → GATE 2 → SANDBOX → OUTCOME)
+- **Audit Log** — all historical runs with color-coded badges, most recent first
+
+No build step required. Zero extra dependencies beyond the standard library.
 
 ## Sample Alerts
 
@@ -82,10 +102,19 @@ audit/
 ## Human Gates
 
 ### Gate 1 — Validate Diagnosis (~30 seconds)
-The AI presents 2–3 ranked hypotheses with confidence scores, reasoning, and uncertainty flags. The engineer either confirms one or rejects all and provides a correction. A rejection injects the engineer's context back into the AI's next diagnosis pass.
+The AI presents 2–3 ranked hypotheses with confidence scores, reasoning, and uncertainty flags. The engineer either confirms one or rejects all and provides a correction. A rejection injects the engineer's context back into the AI's next diagnosis pass. Engineers can type `?` to ask the AI a follow-up clarification question.
 
 ### Gate 2 — Approve Fix (~60–90 seconds)
 The AI presents a unified diff, blast radius summary (level, services/files touched), uncertainty flags, and plain-English reasoning. The engineer must type `approve` or `reject` with a one-line rationale. Approval requires explicit accountability. Rejection injects feedback into the next patch generation attempt.
+
+## Auto-Handle Rationale
+
+When the risk classifier returns `LOW` and context freshness is `FRESH`, the system resolves the incident without triggering human gates. This is safe because:
+
+1. **Blast radius is bounded** — risk rules confirm no auth, payment, or cross-service impact
+2. **Context is verified fresh** — recent human review and low commit churn reduce stale-context risk
+3. **Failures are isolated** — a faulty low-risk patch cannot cascade to unrelated services by definition
+4. **Nothing is silent** — every auto-resolution is logged to `audit_log.json` and visible in the dashboard; engineers can review or override at any time
 
 ## Audit Log
 
@@ -95,3 +124,5 @@ Every pipeline run appends a structured entry to `audit_log.json` containing: al
 
 - `openai` — GPT-4.1 for diagnosis and patch generation
 - `python-dotenv` — loads `OPENAI_API_KEY` from `.env`
+- `rich` — terminal formatting for CLI output
+- `server.py` uses Python standard library only (no extra install needed)
