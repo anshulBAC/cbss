@@ -1,5 +1,5 @@
 """
-Integration tests for Codex Guardian — Phase 2 updated.
+Integration tests for Codex Guardian — Phase 3 updated.
 
 Covers:
   - Full scoring + routing chain
@@ -8,15 +8,18 @@ Covers:
   - Gate 1 and Gate 2 flows
   - _adapt_patch_for_gate2 adapter
   - context_freshness_warning deterministic override
+  - Gate 0 compliance check — blocked path, restriction injection,
+    second approver enforcement, audit field coverage (Phase 3)
 
 No real API key required — all OpenAI calls are mocked.
 """
-
 import sys
 import os
 import json
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
+import tempfile
+import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -48,6 +51,12 @@ HIGH_RISK_ALERT = {
     "error": "Connection pool exhaustion — p99 latency spike to 4200ms",
     "affected_files": ["src/db/connection.py", "src/auth/session.py"],
     "environment": "production",
+}
+
+CRITICAL_ALERT = {
+    "id": "alert-critical", "service": "auth-service", "severity": "CRITICAL",
+    "error": "Total auth failure", "environment": "production",
+    "affected_files": ["src/auth/session.py"],
 }
 
 LOW_RISK_DEPS = {
@@ -101,6 +110,18 @@ SAMPLE_CONTEXT_BUNDLE = {
         "injected_context": [],
     },
 }
+
+def _write_temp_policy(rules, freeze_active=False):
+    data = {"freeze_window": {"active": freeze_active, "reason": "test"}, "rules": rules}
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+    yaml.dump(data, tmp); tmp.flush(); tmp.close()
+    return tmp.name
+
+def _gate0_with_path(policy_path):
+    from gates.gate0_compliance import run_gate0 as _real
+    def _side_effect(alert, route_decision, context_bundle, **_):
+        return _real(alert, route_decision, context_bundle, policies_path=policy_path)
+    return _side_effect
 
 
 # ── Routing Integration Tests ─────────────────────────────────────────────────
@@ -638,6 +659,315 @@ class TestPatchAdapter(unittest.TestCase):
             ["auth-service", "api-gateway"],
         )
 
+class TestComplianceBlockedPath(unittest.TestCase):
+
+    def _hard_block_path(self):
+        return _write_temp_policy([{
+            "id": "POL-BLOCK", "rule": "CRITICAL hard blocked",
+            "condition": {"type": "severity_match", "severities": ["CRITICAL"]},
+            "restriction": "hard block restriction",
+            "hard_block": True, "requires_second_approver": False,
+        }])
+
+    def test_blocked_pipeline_does_not_call_diagnose(self):
+        from main import run_pipeline
+        path = self._hard_block_path()
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=CRITICAL_ALERT):
+                with patch("main.diagnose") as mock_dx:
+                    with patch("main.log_decision"):
+                        run_pipeline(alert_index=0)
+        mock_dx.assert_not_called()
+
+    def test_blocked_pipeline_does_not_call_generate_patch(self):
+        from main import run_pipeline
+        path = self._hard_block_path()
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=CRITICAL_ALERT):
+                with patch("main.generate_patch") as mock_px:
+                    with patch("main.log_decision"):
+                        run_pipeline(alert_index=0)
+        mock_px.assert_not_called()
+
+    def test_blocked_outcome_is_compliance_blocked(self):
+        from main import run_pipeline
+        path = self._hard_block_path()
+        captured = {}
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=CRITICAL_ALERT):
+                with patch("main.log_decision", side_effect=lambda e: captured.update(e)):
+                    run_pipeline(alert_index=0)
+        self.assertEqual(captured.get("outcome"), "compliance_blocked")
+
+    def test_blocked_audit_has_compliance_flags(self):
+        from main import run_pipeline
+        path = self._hard_block_path()
+        captured = {}
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=CRITICAL_ALERT):
+                with patch("main.log_decision", side_effect=lambda e: captured.update(e)):
+                    run_pipeline(alert_index=0)
+        self.assertIn("compliance_flags", captured)
+        self.assertGreater(len(captured["compliance_flags"]), 0)
+
+    def test_blocked_audit_has_compliance_reasoning(self):
+        from main import run_pipeline
+        path = self._hard_block_path()
+        captured = {}
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=CRITICAL_ALERT):
+                with patch("main.log_decision", side_effect=lambda e: captured.update(e)):
+                    run_pipeline(alert_index=0)
+        self.assertIn("compliance_reasoning", captured)
+        self.assertIsInstance(captured["compliance_reasoning"], list)
+        self.assertGreater(len(captured["compliance_reasoning"]), 0)
+
+
+# ─────────────────────────────────────────────────────────────
+# RESTRICTION INJECTION
+# ─────────────────────────────────────────────────────────────
+
+class TestRestrictionInjection(unittest.TestCase):
+
+    def _soft_policy(self):
+        return _write_temp_policy([{
+            "id": "POL-SOFT", "rule": "auth restriction",
+            "condition": {"type": "service_name_match", "services": ["auth-service"]},
+            "restriction": "DBA sign-off required for auth-service patches",
+            "hard_block": False, "requires_second_approver": False,
+        }])
+
+    def _no_rules(self):
+        return _write_temp_policy([])
+
+    def _capture_injected_at_diagnose_time(self, policy_path, alert):
+        captured = {}
+        from main import run_pipeline
+
+        def capture_diagnose(bundle):
+            captured["injected_context"] = list(
+                bundle.get("org_context", {}).get("injected_context", [])
+            )
+            return MOCK_DIAGNOSIS
+
+        with patch("main.run_gate0", side_effect=_gate0_with_path(policy_path)):
+            with patch("main._load_alert", return_value=alert):
+                with patch("main.diagnose", side_effect=capture_diagnose):
+                    with patch("main.generate_patch", return_value=MOCK_PATCH):
+                        with patch("builtins.input",
+                                   side_effect=["@eng", "1", "@eng", "approve", "ok"]):
+                            with patch("main.log_decision"):
+                                run_pipeline(alert_index=0)
+        return captured.get("injected_context", [])
+
+    def test_soft_restriction_in_injected_context(self):
+        injected = self._capture_injected_at_diagnose_time(
+            self._soft_policy(), HIGH_RISK_ALERT
+        )
+        compliance_entries = [x for x in injected if "[Compliance]" in x]
+        self.assertGreater(len(compliance_entries), 0)
+        self.assertTrue(any("DBA" in x for x in compliance_entries))
+
+    def test_no_compliance_entries_when_no_rules_trigger(self):
+        injected = self._capture_injected_at_diagnose_time(
+            self._no_rules(), HIGH_RISK_ALERT
+        )
+        compliance_entries = [x for x in injected if "[Compliance]" in x]
+        self.assertEqual(compliance_entries, [])
+
+    def test_multiple_restrictions_all_injected(self):
+        multi_policy = _write_temp_policy([
+            {
+                "id": "R1", "rule": "auth",
+                "condition": {"type": "service_name_match", "services": ["auth-service"]},
+                "restriction": "restriction one",
+                "hard_block": False, "requires_second_approver": False,
+            },
+            {
+                "id": "R2", "rule": "file",
+                "condition": {"type": "file_pattern_match", "patterns": ["connection.py"]},
+                "restriction": "restriction two",
+                "hard_block": False, "requires_second_approver": False,
+            },
+        ])
+        injected = self._capture_injected_at_diagnose_time(multi_policy, HIGH_RISK_ALERT)
+        compliance_entries = [x for x in injected if "[Compliance]" in x]
+        self.assertEqual(len(compliance_entries), 2)
+
+
+# ─────────────────────────────────────────────────────────────
+# SECOND APPROVER ENFORCEMENT
+# ─────────────────────────────────────────────────────────────
+
+class TestSecondApproverEnforcement(unittest.TestCase):
+
+    def _second_approver_policy(self):
+        return _write_temp_policy([{
+            "id": "POL-2PA", "rule": "auth requires 2PA",
+            "condition": {"type": "service_name_match", "services": ["auth-service"]},
+            "restriction": "2-person approval required",
+            "hard_block": False, "requires_second_approver": True,
+        }])
+
+    def _no_rules(self):
+        return _write_temp_policy([])
+
+    def test_second_approver_called_when_required(self):
+        from main import run_pipeline
+        path = self._second_approver_policy()
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=HIGH_RISK_ALERT):
+                with patch("main.diagnose", return_value=MOCK_DIAGNOSIS):
+                    with patch("main.generate_patch", return_value=MOCK_PATCH):
+                        with patch("main._collect_second_approver") as mock_2pa:
+                            mock_2pa.return_value = {
+                                "approved_by": "@second", "rationale": "ok", "decision": "approve"
+                            }
+                            with patch("builtins.input",
+                                       side_effect=["@eng", "1", "@eng", "approve", "ok"]):
+                                with patch("main.log_decision"):
+                                    run_pipeline(alert_index=0)
+        mock_2pa.assert_called_once()
+
+    def test_second_approver_not_called_when_not_required(self):
+        from main import run_pipeline
+        path = self._no_rules()
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=HIGH_RISK_ALERT):
+                with patch("main.diagnose", return_value=MOCK_DIAGNOSIS):
+                    with patch("main.generate_patch", return_value=MOCK_PATCH):
+                        with patch("main._collect_second_approver") as mock_2pa:
+                            with patch("builtins.input",
+                                       side_effect=["@eng", "1", "@eng", "approve", "ok"]):
+                                with patch("main.log_decision"):
+                                    run_pipeline(alert_index=0)
+        mock_2pa.assert_not_called()
+
+    def test_second_approver_handle_in_audit_log(self):
+        from main import run_pipeline
+        path = self._second_approver_policy()
+        captured = {}
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=HIGH_RISK_ALERT):
+                with patch("main.diagnose", return_value=MOCK_DIAGNOSIS):
+                    with patch("main.generate_patch", return_value=MOCK_PATCH):
+                        with patch("main._collect_second_approver") as mock_2pa:
+                            mock_2pa.return_value = {
+                                "approved_by": "@second-eng", "rationale": "ok", "decision": "approve"
+                            }
+                            with patch("builtins.input",
+                                       side_effect=["@eng", "1", "@eng", "approve", "ok"]):
+                                with patch("main.log_decision",
+                                           side_effect=lambda e: captured.update(e)):
+                                    run_pipeline(alert_index=0)
+        self.assertEqual(captured.get("second_approver"), "@second-eng")
+
+    def test_second_approver_na_when_not_required(self):
+        from main import run_pipeline
+        path = self._no_rules()
+        captured = {}
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=HIGH_RISK_ALERT):
+                with patch("main.diagnose", return_value=MOCK_DIAGNOSIS):
+                    with patch("main.generate_patch", return_value=MOCK_PATCH):
+                        with patch("builtins.input",
+                                   side_effect=["@eng", "1", "@eng", "approve", "ok"]):
+                            with patch("main.log_decision",
+                                       side_effect=lambda e: captured.update(e)):
+                                run_pipeline(alert_index=0)
+        self.assertEqual(captured.get("second_approver"), "N/A")
+
+    def test_second_approver_rejection_triggers_new_patch(self):
+        """Second approver rejection must loop back to patch generation."""
+        from main import run_pipeline
+        path = self._second_approver_policy()
+        patch_call_count = {"n": 0}
+
+        def count_patches(h, b):
+            patch_call_count["n"] += 1
+            return MOCK_PATCH
+
+        rejection_used = {"done": False}
+
+        def side_effect_2pa(gate2_result):
+            if not rejection_used["done"]:
+                rejection_used["done"] = True
+                return {"approved_by": "@second", "rationale": "not yet", "decision": "rejected"}
+            return {"approved_by": "@second", "rationale": "ok now", "decision": "approve"}
+
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=HIGH_RISK_ALERT):
+                with patch("main.diagnose", return_value=MOCK_DIAGNOSIS):
+                    with patch("main.generate_patch", side_effect=count_patches):
+                        with patch("main._collect_second_approver",
+                                   side_effect=side_effect_2pa):
+                            with patch("builtins.input",
+                                       side_effect=["@eng", "1",
+                                                    "@eng", "approve", "first",
+                                                    "@eng", "approve", "second"]):
+                                with patch("main.log_decision"):
+                                    run_pipeline(alert_index=0)
+
+        self.assertGreaterEqual(patch_call_count["n"], 2)
+
+
+# ─────────────────────────────────────────────────────────────
+# AUDIT ENTRY — PHASE 3 FIELDS IN ALL PATHS
+# ─────────────────────────────────────────────────────────────
+
+class TestAuditPhase3Fields(unittest.TestCase):
+
+    def _no_rules(self):
+        return _write_temp_policy([])
+
+    def test_auto_handle_audit_has_all_phase3_fields(self):
+        from main import run_pipeline
+        path = self._no_rules()
+        captured = {}
+        auto_route = {"route": "auto-handle", "risk_level": "LOW",
+                      "freshness": "FRESH", "explanation": "auto"}
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=LOW_RISK_ALERT):
+                with patch("main.route", return_value=auto_route):
+                    with patch("main.log_decision",
+                               side_effect=lambda e: captured.update(e)):
+                        run_pipeline(alert_index=0)
+        for field in ["compliance_flags", "compliance_reasoning", "second_approver"]:
+            self.assertIn(field, captured)
+
+    def test_full_escalation_audit_has_all_phase3_fields(self):
+        from main import run_pipeline
+        path = self._no_rules()
+        captured = {}
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=HIGH_RISK_ALERT):
+                with patch("main.diagnose", return_value=MOCK_DIAGNOSIS):
+                    with patch("main.generate_patch", return_value=MOCK_PATCH):
+                        with patch("builtins.input",
+                                   side_effect=["@eng", "1", "@eng", "approve", "ok"]):
+                            with patch("main.log_decision",
+                                       side_effect=lambda e: captured.update(e)):
+                                run_pipeline(alert_index=0)
+        for field in ["compliance_flags", "compliance_reasoning",
+                      "diagnosis_reasoning_chain", "patch_reasoning_chain",
+                      "gate1_clarifications", "gate2_clarifications", "second_approver"]:
+            self.assertIn(field, captured, f"Missing field in audit: {field}")
+
+    def test_compliance_blocked_audit_has_phase3_fields(self):
+        from main import run_pipeline
+        path = _write_temp_policy([{
+            "id": "HARD", "rule": "hard block",
+            "condition": {"type": "severity_match", "severities": ["CRITICAL"]},
+            "restriction": "blocked", "hard_block": True, "requires_second_approver": False,
+        }])
+        captured = {}
+        with patch("main.run_gate0", side_effect=_gate0_with_path(path)):
+            with patch("main._load_alert", return_value=CRITICAL_ALERT):
+                with patch("main.log_decision",
+                           side_effect=lambda e: captured.update(e)):
+                    run_pipeline(alert_index=0)
+        for field in ["compliance_flags", "compliance_reasoning", "second_approver"]:
+            self.assertIn(field, captured)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

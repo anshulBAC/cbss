@@ -1,0 +1,94 @@
+# =============================================================================
+# CODEX GUARDIAN — COMPLIANCE POLICY RULEBOOK
+# =============================================================================
+# Each rule is evaluated by gates/gate0_compliance.py before any AI work runs.
+#
+# Rule structure:
+#   id:          Unique rule identifier (e.g. POL-001)
+#   rule:        Human-readable rule description
+#   condition:   What triggers this rule (evaluated in gate0_compliance.py)
+#   restriction: Plain-English string injected into AI context when triggered
+#   hard_block:  If true, pipeline halts immediately — no AI runs, no human gates
+#   requires_second_approver: If true, Gate 2 prompts for a second engineer sign-off
+#
+# Condition types:
+#   service_name_match   — alert.service is in a given list
+#   severity_match       — alert.severity matches a given list
+#   environment_match    — alert.environment matches a given value
+#   file_pattern_match   — alert.affected_files contains a matching substring
+#   shared_infra_present — context_bundle.dependencies.shared_infra is non-empty
+#   freeze_window_active — environment matches AND freeze_active flag is true below
+#
+# FREEZE WINDOW CONTROL:
+#   Set freeze_active: true below to engage a production deploy freeze.
+#   Non-technical team members can toggle this without touching any Python code.
+# =============================================================================
+
+freeze_window:
+  active: false
+  reason: "Scheduled maintenance window — production deploys suspended"
+
+rules:
+
+  - id: POL-001
+    rule: "auth-service and payments-service patches require 2-person approval"
+    condition:
+      type: service_name_match
+      services:
+        - auth-service
+        - payments-service
+        - payment-service
+    restriction: >
+      2-person approval required: this patch touches a high-trust service.
+      A second engineer must approve at Gate 2 before deployment proceeds.
+    hard_block: false
+    requires_second_approver: true
+
+  - id: POL-002
+    rule: "Production deployments are blocked during an active freeze window"
+    condition:
+      type: freeze_window_active
+      environment: production
+    restriction: >
+      Deploy freeze is currently active. Production deployments are blocked.
+      Contact the on-call incident commander to request an exception.
+    hard_block: true
+    requires_second_approver: false
+
+  - id: POL-003
+    rule: "Database connection config changes require an explicit DBA sign-off note in the approval rationale"
+    condition:
+      type: file_pattern_match
+      patterns:
+        - connection.py
+        - db/
+        - pool
+        - database.py
+    restriction: >
+      DB connection config is affected. Engineer must include explicit DBA
+      acknowledgement in the Gate 2 approval rationale before deploying.
+    hard_block: false
+    requires_second_approver: false
+
+  - id: POL-004
+    rule: "Patches touching shared infrastructure require an explicit blast radius review"
+    condition:
+      type: shared_infra_present
+    restriction: >
+      Shared infrastructure is affected (e.g. postgres-primary, redis-cache).
+      Blast radius review is mandatory. Do not generate a patch that expands
+      the blast radius beyond the minimum required for the fix.
+    hard_block: false
+    requires_second_approver: false
+
+  - id: POL-005
+    rule: "CRITICAL severity alerts are hard-blocked pending manual escalation to incident commander"
+    condition:
+      type: severity_match
+      severities:
+        - CRITICAL
+    restriction: >
+      CRITICAL alert: automated pipeline is hard-blocked.
+      Page the incident commander immediately. Do not attempt an automated fix.
+    hard_block: true
+    requires_second_approver: false
