@@ -21,8 +21,13 @@ from typing import Any, Dict, List
 
 import openai
 from dotenv import load_dotenv
+from rich.console import Console
+from rich.panel import Panel
+from rich import box
 
 load_dotenv()
+
+console = Console()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -40,17 +45,16 @@ def _display_reasoning_chain(reasoning_chain: List[Dict[str, Any]]) -> None:
     """Print the AI's step-by-step reasoning chain (read-only) before decision."""
     if not reasoning_chain:
         return
-    print("\nAI reasoning chain (read-only):")
-    print("-" * 72)
+    steps_text = ""
     for step in reasoning_chain:
         n   = step.get("step", "?")
         obs = step.get("observation", "")
         inf = step.get("inference", "")
         ev  = step.get("evidence", "")
-        print(f"  Step {n}: {obs}")
-        print(f"    -> {inf}")
-        print(f"    Evidence field: {ev}")
-    print("-" * 72)
+        steps_text += f"[bold]Step {n}:[/bold] {obs}\n"
+        steps_text += f"  [dim]→ {inf}[/dim]\n"
+        steps_text += f"  [dim]Evidence: {ev}[/dim]\n\n"
+    console.print(Panel(steps_text.rstrip(), title="[bold]AI Reasoning Chain[/bold] [dim](read-only)[/dim]", box=box.ROUNDED))
 
 
 def _ask_clarification(question: str, diagnosis_result: Dict[str, Any]) -> str:
@@ -121,19 +125,21 @@ def run_gate1(diagnosis_result: Dict[str, Any]) -> Dict[str, Any]:
         "clarification_log":      [{"question": str, "answer": str}]
       }
     """
-    print("\n" + "=" * 72)
-    print("GATE 1 — VALIDATE DIAGNOSIS  (target: ~30 seconds)")
-    print("=" * 72)
+    console.print()
+    console.print(Panel(
+        "[bold white]GATE 1 — VALIDATE DIAGNOSIS[/bold white]\n[dim]Target: ~30 seconds[/dim]",
+        style="bold blue", box=box.HEAVY,
+    ))
 
     clarification_log: List[Dict[str, str]] = []
 
     if diagnosis_result.get("context_freshness_warning"):
-        print("Warning: Context may be stale (recent human review is missing).\n")
+        console.print(Panel("⚠️  Context may be stale (recent human review is missing).", style="bold yellow"))
 
     hypotheses: List[Dict[str, Any]] = diagnosis_result.get("hypotheses", [])
 
     if not hypotheses:
-        print("No hypotheses returned by AI. Escalate to manual investigation.")
+        console.print(Panel("No hypotheses returned by AI. Escalate to manual investigation.", style="red"))
         engineer = input("Enter your handle (e.g., @keefe): ").strip() or "@unknown"
         return {
             "decision":               "rejected",
@@ -146,27 +152,38 @@ def run_gate1(diagnosis_result: Dict[str, Any]) -> Dict[str, Any]:
     # Phase 4: show reasoning chain before hypotheses
     _display_reasoning_chain(diagnosis_result.get("reasoning_chain", []))
 
-    print("AI hypotheses:\n")
+    console.print("\n[bold]AI Hypotheses:[/bold]\n")
     for idx, h in enumerate(hypotheses, start=1):
         hid       = h.get("id", idx)
         desc      = h.get("description", "(no description)")
-        conf      = _format_percent(h.get("confidence", 0.0))
+        conf_raw  = h.get("confidence", 0.0)
+        conf      = _format_percent(conf_raw)
         reasoning = h.get("reasoning", "(no reasoning provided)")
         flags     = h.get("uncertainty_flags", [])
 
-        print(f"[{idx}] Hypothesis ID: {hid}  |  Confidence: {conf}")
-        print(f"    Summary: {desc}")
-        print(f"    Reasoning: {reasoning}")
-        if flags:
-            print(f"    Uncertainty flags: {', '.join(str(x) for x in flags)}")
-        else:
-            print("    Uncertainty flags: none")
-        print("-" * 72)
+        try:
+            conf_val = float(conf_raw)
+        except Exception:
+            conf_val = 0.0
+        conf_color = "green" if conf_val >= 0.70 else "yellow" if conf_val >= 0.40 else "red"
 
-    print("\nYour decision:")
-    print("  - Type a number (e.g., 1) to CONFIRM a hypothesis.")
-    print('  - Type "r" to REJECT ALL and provide a correction/context.')
-    print('  - Type "?" to ask a clarification question.\n')
+        flags_text = (
+            f"[yellow]{', '.join(str(x) for x in flags)}[/yellow]"
+            if flags else "[green]none[/green]"
+        )
+        content = (
+            f"[bold]Hypothesis ID:[/bold] {hid}  |  "
+            f"[bold]Confidence:[/bold] [{conf_color}]{conf}[/{conf_color}]\n\n"
+            f"[bold]Summary:[/bold] {desc}\n\n"
+            f"[bold]Reasoning:[/bold] {reasoning}\n\n"
+            f"[bold]Uncertainty flags:[/bold] {flags_text}"
+        )
+        console.print(Panel(content, title=f"[bold]#{idx}[/bold]", box=box.ROUNDED))
+
+    console.print("\n[bold]Your decision:[/bold]")
+    console.print("  • Type a number [bold](e.g., 1)[/bold] to [green]CONFIRM[/green] a hypothesis.")
+    console.print('  • Type [bold]"r"[/bold] to [red]REJECT ALL[/red] and provide a correction/context.')
+    console.print('  • Type [bold]"?"[/bold] to ask a clarification question.\n')
 
     engineer = input("Enter your handle (e.g., @keefe): ").strip() or "@unknown"
 
@@ -179,16 +196,16 @@ def run_gate1(diagnosis_result: Dict[str, Any]) -> Dict[str, Any]:
         if choice == "?":
             question = input("Your question: ").strip()
             if question:
-                print("\n[Clarification] Asking AI...")
+                console.print("\n[dim][Clarification] Asking AI...[/dim]")
                 answer = _ask_clarification(question, diagnosis_result)
-                print(f"\n  Answer: {answer}\n")
+                console.print(Panel(f"[italic]{answer}[/italic]", title="[bold]AI Answer[/bold]", box=box.ROUNDED))
                 clarification_log.append({"question": question, "answer": answer})
             continue
 
         if choice == "r":
             correction = input("Correction/context (1-2 sentences): ").strip()
             if not correction:
-                print("Correction cannot be empty. Try again.")
+                console.print("[red]Correction cannot be empty. Try again.[/red]")
                 continue
             return {
                 "decision":               "rejected",
@@ -210,4 +227,4 @@ def run_gate1(diagnosis_result: Dict[str, Any]) -> Dict[str, Any]:
                     "clarification_log":      clarification_log,
                 }
 
-        print(f"Invalid input. Enter 1-{len(hypotheses)}, 'r', or '?'.")
+        console.print(f"[red]Invalid input. Enter 1-{len(hypotheses)}, 'r', or '?'.[/red]")

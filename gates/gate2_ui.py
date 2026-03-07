@@ -23,8 +23,14 @@ from typing import Any, Dict, List
 
 import openai
 from dotenv import load_dotenv
+from rich.console import Console
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich import box
 
 load_dotenv()
+
+console = Console()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -49,37 +55,35 @@ def _display_diff(diff: str, depth: str = "1") -> None:
     depth "2" — unified diff (normal)
     depth "3" — unified diff with line numbers (expanded)
     """
-    print(f"\nProposed diff  [depth={depth}]  (type 'd' at decision prompt to change view):")
-    print("-" * 72)
-
     if depth == "1":
-        print(f"  {_diff_stats(diff)}")
-
+        console.print(Panel(
+            f"[dim]{_diff_stats(diff)}[/dim]",
+            title=f"[bold]Proposed Diff[/bold] [dim]depth=1 · type 'd' to expand[/dim]",
+            box=box.ROUNDED,
+        ))
     elif depth == "3":
-        for i, line in enumerate(diff.split("\n"), start=1):
-            print(f"  {i:>3}  {line}")
-
-    else:  # "2" or anything unrecognised
-        print(diff)
-
-    print("-" * 72)
+        numbered = "\n".join(f"{i:>3}  {line}" for i, line in enumerate(diff.split("\n"), start=1))
+        syntax = Syntax(numbered, "diff", theme="monokai", line_numbers=False, word_wrap=True)
+        console.print(Panel(syntax, title="[bold]Proposed Diff[/bold] [dim]depth=3 · line numbers[/dim]", box=box.ROUNDED))
+    else:
+        syntax = Syntax(diff, "diff", theme="monokai", line_numbers=False, word_wrap=True)
+        console.print(Panel(syntax, title="[bold]Proposed Diff[/bold] [dim]depth=2 · unified[/dim]", box=box.ROUNDED))
 
 
 def _display_reasoning_chain(reasoning_chain: List[Dict[str, Any]]) -> None:
     """Print the AI's patch reasoning chain (read-only)."""
     if not reasoning_chain:
         return
-    print("\nAI patch reasoning chain (read-only):")
-    print("-" * 72)
+    steps_text = ""
     for step in reasoning_chain:
-        n          = step.get("step", "?")
-        obs        = step.get("observation", "")
-        decision   = step.get("decision", "")
-        trade_off  = step.get("trade_off", "")
-        print(f"  Step {n}: {obs}")
-        print(f"    -> Decision: {decision}")
-        print(f"    Trade-off:   {trade_off}")
-    print("-" * 72)
+        n         = step.get("step", "?")
+        obs       = step.get("observation", "")
+        decision  = step.get("decision", "")
+        trade_off = step.get("trade_off", "")
+        steps_text += f"[bold]Step {n}:[/bold] {obs}\n"
+        steps_text += f"  [dim]→ Decision: {decision}[/dim]\n"
+        steps_text += f"  [dim]Trade-off: {trade_off}[/dim]\n\n"
+    console.print(Panel(steps_text.rstrip(), title="[bold]AI Patch Reasoning Chain[/bold] [dim](read-only)[/dim]", box=box.ROUNDED))
 
 
 def _display_compliance_check(compliance_check: Dict[str, Any]) -> None:
@@ -89,12 +93,14 @@ def _display_compliance_check(compliance_check: Dict[str, Any]) -> None:
     compliant  = compliance_check.get("patch_is_compliant", True)
     assessment = compliance_check.get("assessment", "")
     flags      = compliance_check.get("flags_reviewed", [])
-    status     = "COMPLIANT" if compliant else "NON-COMPLIANT (review required)"
-    print(f"\nAI compliance self-check: {status}")
+    status_color = "green" if compliant else "red"
+    status_text  = "COMPLIANT ✓" if compliant else "NON-COMPLIANT ✗ (review required)"
+    body = f"[{status_color}][bold]{status_text}[/bold][/{status_color}]"
     if flags:
-        print(f"  Flags reviewed: {', '.join(flags)}")
+        body += f"\n[bold]Flags reviewed:[/bold] {', '.join(flags)}"
     if assessment:
-        print(f"  Assessment: {assessment}")
+        body += f"\n[bold]Assessment:[/bold] {assessment}"
+    console.print(Panel(body, title="[bold]AI Compliance Self-Check[/bold]", box=box.ROUNDED, border_style=status_color))
 
 
 def _ask_clarification(question: str, patch_result: Dict[str, Any]) -> str:
@@ -175,45 +181,55 @@ def run_gate2(
         "clarification_log": [{"question": str, "answer": str}]
       }
     """
-    print("\n" + "=" * 72)
-    print("GATE 2 — APPROVE PATCH (human authority boundary)")
-    print("=" * 72)
+    console.print()
+    console.print(Panel(
+        "[bold white]GATE 2 — APPROVE PATCH[/bold white]\n[dim]Human authority boundary · Target: ~60–90 seconds[/dim]",
+        style="bold magenta", box=box.HEAVY,
+    ))
 
     clarification_log: List[Dict[str, str]] = []
 
     # Optional risk routing summary
     if risk_score:
-        print(f"Risk tier: {risk_score.get('overall', 'N/A')}  |  "
-              f"Freshness: {risk_score.get('freshness', 'N/A')}")
+        overall = risk_score.get("overall", "N/A")
+        freshness = risk_score.get("freshness", "N/A")
+        risk_color = "red" if overall == "HIGH" else "yellow" if overall == "MEDIUM" else "green"
+        fresh_color = "green" if freshness == "OK" else "yellow"
+        console.print(
+            f"Risk tier: [{risk_color}]{overall}[/{risk_color}]  |  "
+            f"Freshness: [{fresh_color}]{freshness}[/{fresh_color}]"
+        )
         why = risk_score.get("why")
         if why:
-            print(f"Risk rationale: {why}")
-        print("-" * 72)
+            console.print(f"[dim]Risk rationale: {why}[/dim]")
+        console.rule()
 
     blast    = patch_result.get("blast_radius", {}) or {}
     flags    = patch_result.get("uncertainty_flags", []) or []
     diff     = patch_result.get("diff", "(no diff provided)")
     reasoning = patch_result.get("reasoning", "(no reasoning provided)")
 
-    # Blast radius summary
+    # Blast radius panel — color by severity
     level    = blast.get("level", "N/A")
     services = blast.get("services_touched", []) or []
     files_t  = blast.get("files_touched", []) or []
     notes    = blast.get("notes", "")
 
-    print("Patch summary:")
-    print(f"  Blast radius level: {level}")
+    blast_color = "red" if level == "HIGH" else "yellow" if level == "MEDIUM" else "green"
+    blast_body = f"[bold]Level:[/bold] [{blast_color}]{level}[/{blast_color}]"
     if services:
-        print(f"  Services touched: {', '.join(services)}")
+        blast_body += f"\n[bold]Services touched:[/bold] {', '.join(services)}"
     if files_t:
-        print(f"  Files touched: {', '.join(files_t)}")
+        blast_body += f"\n[bold]Files touched:[/bold] {', '.join(files_t)}"
     if notes:
-        print(f"  Notes: {notes}")
+        blast_body += f"\n[bold]Notes:[/bold] {notes}"
+    console.print(Panel(blast_body, title="[bold]Blast Radius[/bold]", box=box.ROUNDED, border_style=blast_color))
 
     if flags:
-        print(f"\nUncertainty flags: {', '.join(str(x) for x in flags)}")
+        flags_body = "\n".join(f"  ⚠️  {f}" for f in flags)
+        console.print(Panel(flags_body, title="[bold yellow]Uncertainty Flags[/bold yellow]", border_style="yellow", box=box.ROUNDED))
 
-    print(f"\nAI reasoning (plain):\n  {reasoning}")
+    console.print(Panel(f"[italic]{reasoning}[/italic]", title="[bold]AI Reasoning[/bold]", box=box.ROUNDED))
 
     # Phase 4: reasoning chain + compliance check
     _display_reasoning_chain(patch_result.get("reasoning_chain", []))
@@ -223,9 +239,12 @@ def run_gate2(
     diff_depth = "1"
     _display_diff(diff, depth=diff_depth)
 
-    print("\nDecision check (human judgment required):")
-    print("  Consider timing + business impact vs deployment risk.")
-    print("  Example: peak hours, market open, major release window, on-call capacity.\n")
+    console.print(Panel(
+        "[bold]Decision check[/bold] — human judgment required:\n\n"
+        "Consider timing + business impact vs deployment risk.\n"
+        "[dim]Example: peak hours, market open, major release window, on-call capacity.[/dim]",
+        style="bold white", box=box.ROUNDED,
+    ))
 
     approver = input("Enter your handle (e.g., @keefe): ").strip() or "@unknown"
 
@@ -247,17 +266,18 @@ def run_gate2(
         if decision == "?":
             question = input("Your question: ").strip()
             if question:
-                print("\n[Clarification] Asking AI...")
+                console.print("\n[dim][Clarification] Asking AI...[/dim]")
                 answer = _ask_clarification(question, patch_result)
-                print(f"\n  Answer: {answer}\n")
+                console.print(Panel(f"[italic]{answer}[/italic]", title="[bold]AI Answer[/bold]", box=box.ROUNDED))
                 clarification_log.append({"question": question, "answer": answer})
             continue
 
         if decision == "approve":
             rationale = input("1-line rationale (why approve now?): ").strip()
             if not rationale:
-                print("Rationale cannot be empty. Try again.")
+                console.print("[red]Rationale cannot be empty. Try again.[/red]")
                 continue
+            console.print(f"\n[bold green]✓ Patch APPROVED by {approver}[/bold green]")
             return {
                 "decision":          "approved",
                 "rationale":         rationale,
@@ -268,8 +288,9 @@ def run_gate2(
         if decision == "reject":
             rationale = input("1-line rationale (why reject / what to do next?): ").strip()
             if not rationale:
-                print("Rationale cannot be empty. Try again.")
+                console.print("[red]Rationale cannot be empty. Try again.[/red]")
                 continue
+            console.print(f"\n[bold red]✗ Patch REJECTED by {approver}[/bold red]")
             return {
                 "decision":          "rejected",
                 "rationale":         rationale,
@@ -277,4 +298,4 @@ def run_gate2(
                 "clarification_log": clarification_log,
             }
 
-        print("Invalid input. Type 'approve', 'reject', '?', or 'd'.")
+        console.print("[red]Invalid input. Type 'approve', 'reject', '?', or 'd'.[/red]")

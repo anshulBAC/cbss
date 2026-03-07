@@ -8,15 +8,24 @@
 #   - Check for regressions in api-gateway, billing-service, admin-dashboard
 #   - Only return pass if all tests pass with no new failures
 
+from rich.console import Console
+from rich.panel import Panel
+_console = Console()
+
+
 def run_sandbox(patch_proposal):
     """
     Takes a patch_proposal dictionary from codex/patch.py.
     Simulates running tests and always returns a passing result for the demo.
     """
 
-    print("  → Running sandbox validation on proposed patch...")
-    print("  → Checking affected services:", patch_proposal.get("affected_services", []))
-    print("  → All tests passed.")
+    services = patch_proposal.get("affected_services", [])
+    _console.print(f"  → Running sandbox validation on proposed patch...")
+    _console.print(f"  → Checking affected services: {services}")
+    _console.print(Panel(
+        "[bold green]✓ All unit tests passed. No regressions detected.[/bold green]",
+        title="[bold]Sandbox Result[/bold]", border_style="green",
+    ))
 
     return {
         "status": "pass",

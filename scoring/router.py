@@ -6,6 +6,10 @@
 # HIGH risk OR STALE context → escalate to Gate 1 → Gate 2
 
 
+from rich.console import Console
+_console = Console()
+
+
 def route(risk_result, freshness_result):
     """
     Decide whether to auto-handle the incident or escalate to human gates.
@@ -25,7 +29,7 @@ def route(risk_result, freshness_result):
               - 'freshness' (str): "FRESH" or "STALE"
               - 'explanation' (str): human-readable routing rationale
     """
-    print("[ROUTER] Determining routing decision...")
+    _console.print("[bold][ROUTER][/bold] Determining routing decision...")
 
     risk_level = risk_result.get("level", "LOW")
     freshness = freshness_result.get("score", "FRESH")
@@ -54,8 +58,9 @@ def route(risk_result, freshness_result):
             + ". Gate 1 (diagnosis validation) and Gate 2 (patch approval) required."
         )
 
-    print(f"[ROUTER] Route: {route_decision.upper()}")
-    print(f"[ROUTER] {explanation}")
+    route_color = "green" if route_decision == "auto-handle" else "yellow"
+    _console.print(f"[ROUTER] Route: [{route_color}][bold]{route_decision.upper()}[/bold][/{route_color}]")
+    _console.print(f"[ROUTER] [dim]{explanation}[/dim]")
 
     return {
         "route": route_decision,

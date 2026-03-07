@@ -5,6 +5,10 @@
 import json
 import sys
 
+from rich.console import Console
+from rich.panel import Panel
+from rich import box
+
 from context.bundle import build_context_bundle
 from scoring.risk_score import score_risk
 from scoring.freshness_score import score_freshness
@@ -22,11 +26,13 @@ from audit.logger import log_decision
 # HELPERS
 # ─────────────────────────────────────────────────────────────
 
+_console = Console()
+
+
 def _header(title):
     """Print a clear stage header to terminal for demo readability."""
-    print("\n" + "═" * 72)
-    print(f"  STEP: {title}")
-    print("═" * 72)
+    _console.print()
+    _console.print(Panel(f"[bold white]{title}[/bold white]", style="bold blue", box=box.HEAVY))
 
 
 def _load_alert(alert_index=0):
@@ -86,13 +92,15 @@ def _collect_second_approver(gate2_result):
         dict: { "approved_by": str, "rationale": str, "decision": str }
               or None if the second approver rejects (caller handles pipeline halt).
     """
-    print("\n" + "=" * 72)
-    print("GATE 2 — SECOND APPROVER REQUIRED (compliance policy POL-001)")
-    print("=" * 72)
-    print("This patch touches a high-trust service and requires a second engineer sign-off.")
-    print(f"Primary approver: {gate2_result.get('approved_by', '@unknown')}")
-    print(f"Primary rationale: {gate2_result.get('rationale', '')}")
-    print("-" * 72)
+    _console.print()
+    _console.print(Panel(
+        f"[bold white]GATE 2 — SECOND APPROVER REQUIRED[/bold white]\n"
+        f"[dim]Compliance policy POL-001[/dim]\n\n"
+        f"This patch touches a high-trust service and requires a second engineer sign-off.\n"
+        f"[bold]Primary approver:[/bold] {gate2_result.get('approved_by', '@unknown')}\n"
+        f"[bold]Primary rationale:[/bold] {gate2_result.get('rationale', '')}",
+        style="bold yellow", box=box.HEAVY,
+    ))
 
     second_approver = input("Second approver handle (must differ from primary): ").strip() or "@unknown"
 
@@ -138,15 +146,17 @@ def run_pipeline(alert_index=0):
     # ── STEP 3: Score decision risk ───────────────────────────
     _header("STEP 3 — Score Decision Risk")
     risk_result = score_risk(alert, context_bundle["dependencies"])
-    print(f"         Risk level: {risk_result['level']}")
+    risk_color = "red" if risk_result['level'] == "HIGH" else "green"
+    _console.print(f"         Risk level: [{risk_color}][bold]{risk_result['level']}[/bold][/{risk_color}]")
     for r in risk_result["reasons"]:
-        print(f"         • {r}")
+        _console.print(f"         • {r}")
 
     # ── STEP 4: Score context freshness ───────────────────────
     _header("STEP 4 — Score Context Freshness")
     freshness_result = score_freshness(context_bundle["git_history"])
-    print(
-        f"         Freshness: {freshness_result['score']} | "
+    fresh_color = "green" if freshness_result['score'] == "FRESH" else "yellow"
+    _console.print(
+        f"         Freshness: [{fresh_color}][bold]{freshness_result['score']}[/bold][/{fresh_color}] | "
         f"Last reviewed: {freshness_result['last_reviewed_days_ago']}d ago | "
         f"Churn: {freshness_result['churn_rate']}"
     )
@@ -154,7 +164,8 @@ def run_pipeline(alert_index=0):
     # ── STEP 5: Route the alert ───────────────────────────────
     _header("STEP 5 — Route Alert")
     route_decision = route(risk_result, freshness_result)
-    print(f"         → Routing to: {route_decision['route'].upper()}")
+    route_color = "green" if route_decision['route'] == "auto-handle" else "yellow"
+    _console.print(f"         → Routing to: [{route_color}][bold]{route_decision['route'].upper()}[/bold][/{route_color}]")
 
     # ── STEP 5.5: Gate 0 — Compliance check ──────────────────
     _header("STEP 5.5 — Gate 0: Compliance Check")
@@ -212,8 +223,21 @@ def run_pipeline(alert_index=0):
 
     # ── AUTO-HANDLE PATH ──────────────────────────────────────
     if route_decision["route"] == "auto-handle":
-        print("\n  [AUTO-HANDLE] Low risk + fresh context. Resolving automatically.")
-        print("  [AUTO-HANDLE] No human gates required.")
+        days_ago = freshness_result.get("last_reviewed_days_ago", "?")
+        churn = freshness_result.get("churn_rate", "?")
+        _console.print(Panel(
+            f"  [bold green]Risk Level :[/bold green]  LOW  ✓\n"
+            f"  [bold green]Context    :[/bold green]  FRESH ✓  (reviewed {days_ago}d ago · churn: {churn})\n"
+            f"  [bold green]Human Gates:[/bold green]  NOT REQUIRED\n\n"
+            f"  [bold]Rationale — why auto-handle is safe here:[/bold]\n"
+            f"  • Risk classifier confirmed: no auth, payment, or cross-service blast radius\n"
+            f"  • Context freshness verified: recent human review and low commit churn\n"
+            f"  • Cumulative risk is bounded: faulty low-risk patches are isolated by design\n"
+            f"  • Full audit trail written to [bold]audit_log.json[/bold] — engineers can review or override at any time\n\n"
+            f"  [dim]Auto-resolutions are never silent — always logged and reviewable.[/dim]",
+            title="[bold green]AUTO-HANDLE — LOW RISK INCIDENT[/bold green]",
+            border_style="green", box=box.HEAVY,
+        ))
 
         _write_audit(
             alert=alert,
@@ -445,18 +469,22 @@ def run_pipeline(alert_index=0):
 
     # ── STEP 12: Final outcome summary ────────────────────────
     _header("STEP 12 — Final Outcome")
-    print(f"  Alert ID:   {alert['id']}")
-    print(f"  Service:    {alert['service']}")
-    print(f"  Route:      {route_decision['route']}")
-    print(f"  Outcome:    {outcome.upper()}")
-    print(f"  Approved by: {approved_by}")
-    print(f"  Sandbox:    {sandbox_result['status'].upper()}")
+    outcome_color = "green" if outcome in ("deployed", "auto-resolved") else "red"
+    sandbox_color = "green" if sandbox_result and sandbox_result.get("status") == "pass" else "red"
+    summary = (
+        f"  Alert ID  :  {alert['id']}\n"
+        f"  Service   :  {alert['service']}\n"
+        f"  Route     :  {route_decision['route']}\n"
+        f"  Outcome   :  [{outcome_color}][bold]{outcome.upper()}[/bold][/{outcome_color}]\n"
+        f"  Approved  :  {approved_by}\n"
+        f"  Sandbox   :  [{sandbox_color}]{sandbox_result['status'].upper() if sandbox_result else 'N/A'}[/{sandbox_color}]"
+    )
     if compliance_result["flags"]:
-        print(f"  Compliance flags: {len(compliance_result['flags'])}")
+        summary += f"\n  Compliance flags: [yellow]{len(compliance_result['flags'])}[/yellow]"
     if second_approver_result:
-        print(f"  Second approver: {second_approver_result['approved_by']}")
-    print("\n  Pipeline complete. Audit log updated.")
-    print("═" * 72 + "\n")
+        summary += f"\n  Second approver: {second_approver_result['approved_by']}"
+    summary += "\n\n  [dim]Pipeline complete. Audit log updated.[/dim]"
+    _console.print(Panel(summary, title="[bold]Pipeline Complete[/bold]", border_style=outcome_color, box=box.HEAVY))
 
 
 # ─────────────────────────────────────────────────────────────
