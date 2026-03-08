@@ -84,12 +84,15 @@ audit/
 `python server.py` starts a lightweight HTTP server at `http://localhost:8080`. The dashboard auto-refreshes every 3 seconds and shows:
 
 - **KPI strip** — total incidents, auto-resolved, escalated, human approvals, patch success rate
-- **Pipeline diagram** — visual 9-stage flow with escalation vs. auto-handle fork
-- **Routing Policy** — justification for why low-risk auto-resolution is safe
-- **Latest Incident** — full journey visualization (ALERT → GATE 1 → GATE 2 → SANDBOX → OUTCOME)
-- **Audit Log** — all historical runs with color-coded badges, most recent first
+- **Pipeline diagram** — visual 9-stage flow with live stage highlighting from the latest audit entry
+- **Latest Incident** — full journey visualization with expandable AI reasoning chains and gate Q&A
+  - Diagnosis Reasoning Chain — numbered inference steps from `diagnosis_reasoning_chain`
+  - Patch Reasoning Chain — numbered decision steps from `patch_reasoning_chain`
+  - Gate Clarifications — Q&A pairs from engineer ↔ AI exchanges at Gate 1 and Gate 2
+- **Compliance Panel** — policy evaluation for the latest incident; each rule shown as TRIGGERED or CLEAR with injected restriction callouts
+- **Audit Log** — all historical runs with color-coded badges, 2nd approver, and compliance flag count; click any row to expand a detail drawer
 
-No build step required. Zero extra dependencies beyond the standard library.
+Design: `Bebas Neue` display font + `IBM Plex Mono` data font, amber/cyan accent palette on deep navy background. No build step required. Zero extra dependencies beyond the standard library.
 
 ## Sample Alerts
 
@@ -118,7 +121,7 @@ When the risk classifier returns `LOW` and context freshness is `FRESH`, the sys
 
 ## Audit Log
 
-Every pipeline run appends a structured entry to `audit_log.json` containing: alert ID, route taken, risk level, context freshness, AI hypothesis, Gate 1 and Gate 2 decisions, approver handle, sandbox result, and outcome.
+Every pipeline run appends a structured entry to `audit_log.json` containing: alert ID, route taken, risk level, context freshness, AI hypothesis, Gate 1 and Gate 2 decisions, primary and second approver handles, sandbox result, outcome, compliance flags, and full reasoning chains.
 
 ## Dependencies
 
