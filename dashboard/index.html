@@ -1259,6 +1259,65 @@
     });
   }, { passive: true });
 
+  /* ── Live status polling (1s — tracks in-flight pipeline stage) ── */
+  let _liveStage = null;
+
+  async function pollStatus() {
+    try {
+      const res = await fetch('/api/status');
+      if (!res.ok) return;
+      const status = await res.json();   // null when no run in progress
+      const stage = status ? status.stage : null;
+      if (stage === _liveStage) return;  // no change
+      _liveStage = stage;
+      if (stage) {
+        // Override pipeline highlighting with live stage
+        applyLiveStage(stage);
+        const badge = document.getElementById('pipeline-stage-badge');
+        if (badge) {
+          const labels = {
+            alert:'ALERT', context:'CONTEXT ⟳', risk:'RISK SCORE ⟳',
+            freshness:'FRESHNESS ⟳', router:'ROUTING ⟳',
+            gate1:'GATE 1 — AWAITING INPUT', patch:'PATCH GEN ⟳',
+            gate2:'GATE 2 — AWAITING INPUT', sandbox:'SANDBOX ⟳', deploy:'DEPLOYING ⟳'
+          };
+          badge.textContent = '● LIVE: ' + (labels[stage] || stage.toUpperCase());
+          badge.style.background = 'rgba(245,158,11,0.2)';
+          badge.style.color = 'var(--amber)';
+        }
+      } else {
+        // Run finished — restore normal rendering
+        renderPipeline(_entries);
+        const badge = document.getElementById('pipeline-stage-badge');
+        if (badge) { badge.style.background = ''; badge.style.color = ''; }
+      }
+    } catch (_) {}
+  }
+
+  function applyLiveStage(stage) {
+    const COMMON   = ['alert','context','risk','freshness','router'];
+    const ESC_PATH = ['gate1','patch','gate2','sandbox','deploy'];
+    const ALL_ESC  = [...COMMON, ...ESC_PATH];
+    const path     = ALL_ESC;
+    const curIdx   = path.indexOf(stage);
+    const done     = curIdx > 0 ? path.slice(0, curIdx) : [];
+
+    document.querySelectorAll('[data-stage]').forEach(el => {
+      const s = el.dataset.stage;
+      el.classList.remove('stage-current', 'stage-done', 'stage-inactive');
+      if (s === stage)         el.classList.add('stage-current');
+      else if (done.includes(s)) el.classList.add('stage-done');
+      else                     el.classList.add('stage-inactive');
+    });
+
+    document.querySelectorAll('[data-after]').forEach(el => {
+      const s    = el.dataset.after;
+      const next = path[path.indexOf(s) + 1];
+      el.classList.remove('stage-inactive');
+      if (!next || (!done.includes(s) && s !== stage)) el.classList.add('stage-inactive');
+    });
+  }
+
   /* ── Data refresh ────────────────────────────────────── */
   async function refresh() {
     try {
@@ -1266,7 +1325,7 @@
       if (!res.ok) throw new Error(res.status);
       _entries = await res.json();
       renderKPIs(_entries);
-      renderPipeline(_entries);
+      if (!_liveStage) renderPipeline(_entries);  // don't clobber live highlighting
       renderLatest(_entries);
       renderCompliance(_entries);
       renderTable(_entries);
@@ -1277,6 +1336,7 @@
 
   refresh();
   setInterval(refresh, 3000);
+  setInterval(pollStatus, 1000);
 </script>
 </body>
 </html>

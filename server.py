@@ -14,10 +14,11 @@ import json
 import os
 import sys
 
-PORT         = int(os.environ.get("PORT", 8080))
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-DASHBOARD    = os.path.join(PROJECT_ROOT, "dashboard")
-AUDIT_LOG    = os.path.join(PROJECT_ROOT, "audit_log.json")
+PORT            = int(os.environ.get("PORT", 8080))
+PROJECT_ROOT    = os.path.dirname(os.path.abspath(__file__))
+DASHBOARD       = os.path.join(PROJECT_ROOT, "dashboard")
+AUDIT_LOG       = os.path.join(PROJECT_ROOT, "audit_log.json")
+PIPELINE_STATUS = os.path.join(PROJECT_ROOT, "pipeline_status.json")
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -37,6 +38,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if path == "/api/audit":
             self._api_audit()
+        elif path == "/api/status":
+            self._api_status()
         elif path in ("/", "/index.html"):
             self._file(os.path.join(DASHBOARD, "index.html"))
         else:
@@ -61,6 +64,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             pass
 
         body = json.dumps(entries, indent=2).encode("utf-8")
+        self._respond(200, "application/json; charset=utf-8", body, no_cache=True)
+
+    # ── /api/status ───────────────────────────────────────────
+    def _api_status(self):
+        if os.path.isfile(PIPELINE_STATUS):
+            try:
+                with open(PIPELINE_STATUS, "r", encoding="utf-8") as f:
+                    body = f.read().encode("utf-8")
+            except IOError:
+                body = b"null"
+        else:
+            body = b"null"
         self._respond(200, "application/json; charset=utf-8", body, no_cache=True)
 
     # ── static files ──────────────────────────────────────────

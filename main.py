@@ -3,6 +3,7 @@
 # gate1 → patch → gate2 → sandbox → log
 
 import json
+import os
 import sys
 
 from context.bundle import build_context_bundle
@@ -21,6 +22,29 @@ from audit.logger import log_decision
 # ─────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────
+
+_STATUS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline_status.json")
+
+
+def _set_stage(stage, alert_id=None):
+    """Write current pipeline stage to pipeline_status.json for live dashboard highlighting."""
+    from datetime import datetime, timezone
+    try:
+        with open(_STATUS_FILE, "w", encoding="utf-8") as f:
+            json.dump({"stage": stage, "alert_id": alert_id,
+                       "ts": datetime.now(timezone.utc).isoformat()}, f)
+    except OSError:
+        pass
+
+
+def _clear_stage():
+    """Remove live stage file when pipeline completes."""
+    try:
+        if os.path.exists(_STATUS_FILE):
+            os.remove(_STATUS_FILE)
+    except OSError:
+        pass
+
 
 def _header(title):
     """Print a clear stage header to terminal for demo readability."""
@@ -130,13 +154,16 @@ def run_pipeline(alert_index=0):
     # ── STEP 1: Load alert ────────────────────────────────────
     _header("STEP 1 — Load Alert")
     alert = _load_alert(alert_index)
+    _set_stage('alert', alert.get('id'))
 
     # ── STEP 2: Build context bundle ─────────────────────────
     _header("STEP 2 — Build Context Bundle")
+    _set_stage('context', alert.get('id'))
     context_bundle = build_context_bundle(alert)
 
     # ── STEP 3: Score decision risk ───────────────────────────
     _header("STEP 3 — Score Decision Risk")
+    _set_stage('risk', alert.get('id'))
     risk_result = score_risk(alert, context_bundle["dependencies"])
     print(f"         Risk level: {risk_result['level']}")
     for r in risk_result["reasons"]:
@@ -144,6 +171,7 @@ def run_pipeline(alert_index=0):
 
     # ── STEP 4: Score context freshness ───────────────────────
     _header("STEP 4 — Score Context Freshness")
+    _set_stage('freshness', alert.get('id'))
     freshness_result = score_freshness(context_bundle["git_history"])
     print(
         f"         Freshness: {freshness_result['score']} | "
@@ -153,6 +181,7 @@ def run_pipeline(alert_index=0):
 
     # ── STEP 5: Route the alert ───────────────────────────────
     _header("STEP 5 — Route Alert")
+    _set_stage('router', alert.get('id'))
     route_decision = route(risk_result, freshness_result)
     print(f"         → Routing to: {route_decision['route'].upper()}")
 
@@ -201,6 +230,7 @@ def run_pipeline(alert_index=0):
             outcome="compliance_blocked",
             notes="Hard block triggered by Gate 0 compliance check.",
         )
+        _clear_stage()
         return
 
     # Track state for audit log
@@ -234,6 +264,7 @@ def run_pipeline(alert_index=0):
             outcome="auto-resolved",
             notes="Low-risk incident handled automatically. No human intervention.",
         )
+        _clear_stage()
         return
 
     # ── ESCALATION PATH: GATE 1 + GATE 2 ─────────────────────
@@ -247,10 +278,12 @@ def run_pipeline(alert_index=0):
     while confirmed_hypothesis is None:
         diagnosis_attempts += 1
         _header(f"STEP 6 — AI Diagnosis (attempt {diagnosis_attempts})")
+        _set_stage('patch' if diagnosis_attempts > 1 else 'context', alert.get('id'))
         diagnosis_result = diagnose(context_bundle)
 
         # ── STEP 7: Gate 1 — Engineer validates diagnosis ─────
         _header("STEP 7 — Gate 1: Validate Diagnosis")
+        _set_stage('gate1', alert.get('id'))
         gate1_result = run_gate1(diagnosis_result)
 
         if gate1_result["decision"] == "confirmed":
@@ -288,10 +321,12 @@ def run_pipeline(alert_index=0):
 
         patch_attempts += 1
         _header(f"STEP 8 — AI Patch Generation (attempt {patch_attempts})")
+        _set_stage('patch', alert.get('id'))
         patch_proposal = generate_patch(confirmed_hypothesis, context_bundle)
 
         # ── STEP 9: Gate 2 — Engineer approves fix ────────────
         _header("STEP 9 — Gate 2: Approve Fix")
+        _set_stage('gate2', alert.get('id'))
         gate2_result = run_gate2(_adapt_patch_for_gate2(patch_proposal))
 
         if gate2_result["decision"] == "rejected":
@@ -334,6 +369,7 @@ def run_pipeline(alert_index=0):
 
     # ── STEP 10: Sandbox Validation ───────────────────────────
     _header("STEP 10 — Sandbox Validation")
+    _set_stage('sandbox', alert.get('id'))
     sandbox_result = run_sandbox(patch_proposal)
 
     if sandbox_result["status"] == "fail":
@@ -409,6 +445,7 @@ def run_pipeline(alert_index=0):
 
     if sandbox_result["status"] == "pass":
         outcome = "deployed"
+        _set_stage('deploy', alert.get('id'))
         print(f"\n  ✓ Sandbox PASSED: {sandbox_result['details']}")
     else:
         outcome = "sandbox_fail"
@@ -457,6 +494,7 @@ def run_pipeline(alert_index=0):
         print(f"  Second approver: {second_approver_result['approved_by']}")
     print("\n  Pipeline complete. Audit log updated.")
     print("═" * 72 + "\n")
+    _clear_stage()
 
 
 # ─────────────────────────────────────────────────────────────
