@@ -1,154 +1,235 @@
-# Demo Script — Codex Guardian (Competition)
+# Codex Guardian — Demo Script & Video Prompts
 
-## Goal (10 seconds)
-"We're not building an AI that replaces engineers.
-We're building an AI system that **amplifies human judgment** at the exact moments where mistakes are most costly."
-
-Key line:
-**AI processes. Humans decide.**
+> **Total target runtime:** 4–6 minutes
+> **Setup:** Run `./demo_record.sh` — it handles server start, browser open, and QuickTime recording automatically.
 
 ---
 
-## Setup (5 seconds)
-"We'll run two alerts: one high-risk production incident and one low-risk staging warning.
-Watch how the system routes differently — and keep an eye on the dashboard updating live."
+## One-Line Pitch (say this first, on camera)
 
-Before you start:
-- Terminal 1: `python main.py` (the CLI pipeline)
-- Terminal 2: `python server.py` (dashboard at http://localhost:8080)
-- Browser: open the dashboard, position side-by-side with terminal if screen allows
+> "We're not replacing engineers. We're giving them a command center that compresses a production incident into a decision in under 3 minutes — with every AI reasoning step on screen and every approval on record."
 
 ---
 
-## Demo Run 1 — High Risk Production Incident (2–3 minutes)
+## Pre-Demo Checklist
 
-### 1) Alert arrives
-"An alert fires from production. Without Codex Guardian, an engineer would spend 45–90 minutes reading logs and dashboards.
-With Codex Guardian, we compress chaos into clarity."
+```bash
+# Terminal A — start recording script (handles everything):
+./demo_record.sh
 
-Point to:
-- Service = auth-service
-- Severity = HIGH
-- Environment = production
+# That script will:
+#   1. Kill any old server, start python3 server.py
+#   2. Open http://localhost:8080 in your browser
+#   3. Launch QuickTime screen recording
+#   4. Print the exact commands to run
+```
 
-### 2) Risk + freshness routing
-"The system evaluates risk and context freshness.
-This alert is **high-risk** because it touches authentication and production."
-
-Say:
-"This triggers **two gates**: one lightweight to validate the diagnosis, one heavyweight to approve the fix."
-
-### 3) Gate 1 (Lightweight) — Validate Diagnosis
-"Gate 1 exists because if the diagnosis is wrong, everything downstream is wasted effort."
-
-Callout:
-- AI shows 2–3 hypotheses with confidence scores + reasoning chain
-- Uncertainty flags surface what the AI doesn't know
-- Engineer can type `?` to ask a follow-up clarification question
-
-Now emphasize:
-"The human is asked a simple question:
-**Does this match anything you've seen before? Any context I should know?**"
-
-Do:
-- Confirm a hypothesis OR reject and inject correction
-
-Say:
-"This is fast, but it changes the AI's downstream reasoning."
-
-### 4) Patch generation + sandbox mindset
-"Now the AI proposes a patch and summarizes blast radius.
-We assume the AI can be wrong — so we force explicit human judgment at the decision boundary."
-
-### 5) Gate 2 (Heavyweight) — Approve Patch
-"This is the authority boundary: AI cannot deploy."
-
-Point to:
-- diff (syntax-highlighted, collapsible depth)
-- blast radius summary (level + services/files affected)
-- uncertainty flags
-- business trade-off prompt
-
-Say:
-"The engineer must explicitly approve or reject and type a rationale.
-That keeps accountability human-owned."
-
-Complete:
-- Approve with a one-line rationale
-
-### 6) Switch to dashboard (10 seconds)
-"While that ran — here's the management view."
-
-Point to:
-- New entry appeared in the audit log table
-- KPI strip updated: escalated count, human approvals, 100% sandbox pass rate
-- Latest Incident card shows the full journey: ALERT → GATE 1 confirmed → GATE 2 approved → SANDBOX pass → DEPLOYED
-- Every decision is timestamped and attributable
-
-### 7) Wrap Run 1 (10 seconds)
-"Result: AI did the heavy lifting — logs, hypotheses, diff drafting — but human judgment remained central at escalation and deployment."
+**Browser layout:** fullscreen the dashboard tab. Keep Terminal B visible on a split — 60% browser / 40% terminal works well.
 
 ---
 
-## Demo Run 2 — Low Risk Staging Warning (45–60 seconds)
+## SCENE 1 — Dashboard Overview (~45 sec)
 
-### 1) Alert arrives
-"Now we run a low-risk staging warning."
+**What to do:** Slowly pan the dashboard. No commands yet.
 
-Point to:
-- Severity = LOW
-- Environment = staging
-- Single file touched
+**Narration:**
 
-### 2) Routing
-"The system classifies this as low risk + fresh context.
-No gates. No interruption. Auto-handled."
+> "This is the Codex Guardian command center. Every incident that flows through our pipeline lands here in real time."
 
-**Point to the AUTO-HANDLE panel** (green box in CLI output):
-- Risk Level: LOW ✓
-- Context: FRESH ✓ (reviewed recently, low churn)
-- Human Gates: NOT REQUIRED
-- Rationale: blast radius is bounded, context is verified, nothing is silent
+👉 Point to **KPI strip** (top cards)
+> "At a glance — total incidents, auto-resolved without human touch, escalated for review, and patch success rate. All 100% on sandbox validation."
 
-Say:
-"This is how we keep friction low. Humans intervene only when their input changes outcomes."
+👉 Point to **Pipeline diagram**
+> "This is the live pipeline. Right now it's showing the last completed run — DEPLOYED. When a new run starts, each stage lights up as the pipeline moves through it."
 
-Say:
-"And critically — auto-resolutions are never silent. Every one is logged. Visible in the dashboard. Reviewable and overridable at any time."
+👉 Point to **Latest Incident card**
+> "Every run produces a full incident record — the AI hypothesis, the reasoning chain, what the engineer confirmed at each gate. Fully auditable."
 
-### 3) Switch to dashboard (5 seconds)
-Point to:
-- Auto-resolved count ticks up
-- Audit log shows AUTO-HANDLE route with no gate columns
+👉 Point to **Compliance panel**
+> "This is new — a compliance evaluation panel. Every run checks policy rules automatically. POL-001 through POL-005. You can see which ones triggered and exactly why."
 
 ---
 
-## Q&A Talking Points
+## SCENE 2 — Auto-Handle Run (LOW risk) (~45 sec)
 
-**"Why is auto-handling safe for low-risk incidents?"**
-> Three reasons: the risk classifier confirms no blast radius to auth, billing, or cross-service dependencies. Context freshness is verified — recent human review and low commit churn. And nothing is silent — every auto-resolution is audited and engineers can review or override at any time. The dashboard makes that visible.
+**Terminal command:**
+```bash
+python3 backtest.py 2
+```
+*(alert-003 — notification-service, LOW severity, staging)*
 
-**"What stops the AI from making a bad low-risk patch?"**
-> The sandbox still runs. If it fails, the incident re-enters the escalation path automatically. Auto-handle is not unconditional — it's conditional on both the risk classifier and sandbox validation.
+**Narration (while it runs):**
 
-**"How does Gate 1 prevent wasted work?"**
-> If the AI diagnosis is wrong, the engineer rejects it and injects a one-line correction. That context is fed back into the next diagnosis pass — so the AI incorporates human knowledge before generating a patch. You don't patch the wrong problem.
+> "Low risk alert from staging. Watch the pipeline badge in the dashboard — ALERT, CONTEXT, RISK SCORE, FRESHNESS, ROUTER... and straight to DEPLOY."
 
-**"Who is accountable for a deployed patch?"**
-> The approver on record. Gate 2 requires the engineer to type `approve` and provide an explicit rationale. That's logged with their handle in the audit trail. The AI proposes; a human owns the decision.
+👉 Watch the **pipeline stage badge** cycle amber through each stage live
 
-**"Could this scale to a real SOC?"**
-> Yes. The scoring, routing, and gate logic are all policy-configurable. The audit log format is append-only JSON — easy to ship to a SIEM. The dashboard can point to any audit_log.json. The CLI + browser split maps naturally to engineer workstations and ops screens.
+> "No gates. No interruption. The risk classifier confirmed bounded blast radius, context is fresh. The system resolves it automatically — but critically, it's not silent."
+
+👉 Point to **Audit Log** row that appears
+> "Every auto-resolution is logged here. Route taken, timestamp, approver. Engineers can review or challenge any of these at any time."
+
+**Key line:**
+> "This is how you keep friction low — humans intervene only when their input changes the outcome."
 
 ---
 
-## Closing (15 seconds)
-"Most AI systems try to increase autonomy.
-Codex Guardian increases leverage **without surrendering control**.
+## SCENE 3 — HIGH Risk Escalation (manual run) (~2.5 min)
 
-It reduces cognitive overload so senior engineers apply judgment where it matters most:
-- Diagnosis validation
-- Escalation decisions
-- Deployment approval
+**Terminal command:**
+```bash
+python3 main.py 0
+```
+*(alert-001 — auth-service, HIGH severity, production)*
 
-**AI processes. Humans decide.**"
+**Narration as pipeline starts:**
+> "HIGH risk, production, auth-service. This one triggers both gates — because mistakes here can cascade."
+
+👉 Watch dashboard badge: **ALERT → CONTEXT → RISK SCORE → FRESHNESS → ROUTER**
+> "The router sees high risk — escalate path. Gate 1 fires."
+
+---
+
+### Gate 1 — Validate Diagnosis
+
+*Terminal shows 2–3 AI hypotheses with confidence scores*
+
+**Narration:**
+> "Gate 1 is lightweight — under 30 seconds. The AI surfaces its top hypotheses. You see confidence scores, the full reasoning chain, and uncertainty flags — what it knows it doesn't know."
+
+👉 Dashboard badge shows: **● LIVE: GATE 1 — AWAITING INPUT**
+
+**What to type:**
+```
+Enter your handle: @yourname
+# Read hypothesis 1 aloud briefly, then:
+Enter choice: 1
+```
+
+**Narration:**
+> "I'm confirming hypothesis 1. That decision gets injected into everything downstream — the AI now patches for the right problem."
+
+---
+
+### Gate 2 — Approve Patch
+
+*Terminal shows unified diff, blast radius, reasoning*
+
+**Narration:**
+> "Gate 2 is the authority boundary. The AI cannot deploy. It can only propose."
+
+👉 Dashboard badge shows: **● LIVE: GATE 2 — AWAITING INPUT**
+
+**What to type:**
+```
+Enter your handle: @yourname
+Type 'approve' or 'reject': approve
+1-line rationale: Connection pool fix is scoped to src/db — blast radius confirmed minimal
+```
+
+**Narration:**
+> "Explicit approval. Explicit rationale. That engineer owns this deployment on record."
+
+---
+
+### Sandbox + Deploy
+
+*Terminal runs sandbox validation*
+
+👉 Dashboard badge: **● LIVE: SANDBOX ⟳** → **● LIVE: DEPLOYING ⟳** → clears back to **● DEPLOYED**
+
+**Narration:**
+> "Sandbox passes. Deployed. Watch the dashboard update."
+
+---
+
+### Dashboard Walkthrough (after run)
+
+👉 New row appears in **Audit Log**
+> "Full run record — alert ID, route, risk, approver, sandbox result, compliance flags."
+
+👉 Click the row to **expand detail drawer**
+> "Click any row — you get the complete audit trail for that incident."
+
+👉 **Latest Incident card** updates
+> "Latest incident updated. Full journey from ALERT through to DEPLOYED."
+
+👉 Click **Diagnosis Reasoning Chain** expander
+> "Here's the AI's full reasoning — observation, inference, evidence — for every step it took to reach that hypothesis. Not a black box."
+
+👉 Click **Patch Reasoning Chain**
+> "Same for the patch — what it considered, the trade-offs it weighed."
+
+👉 Point to **Compliance panel**
+> "POL-001 triggered — auth-service patch required a second approver. That restriction was injected into the AI's context automatically before it generated the patch."
+
+**Key line:**
+> "Every AI decision is traceable. Every human decision is attributed. That's the audit trail a real ops team needs."
+
+---
+
+## SCENE 4 — Backtest (all alerts, live stage cycling) (~45 sec)
+
+**Terminal command:**
+```bash
+python3 backtest.py
+```
+*(runs all 4 alerts sequentially, auto-approves all gates)*
+
+**Narration:**
+> "This is the backtest runner — it auto-approves all gates and runs the full pipeline for every alert. Watch the dashboard stage badge cycle through each run live."
+
+👉 Keep an eye on the **pipeline diagram** — stages light up amber as each step fires, arrows illuminate as they complete
+
+> "Four alerts processed. Mix of auto-handle and escalation paths. All results appended to the audit log in real time."
+
+👉 Point to growing **Audit Log** table
+> "Every run. Every decision. Append-only. Reviewable."
+
+---
+
+## SCENE 5 — Close (~20 sec)
+
+**Narration:**
+> "Most AI systems optimize for autonomy. Codex Guardian optimizes for leverage."
+>
+> "Senior engineers spend time on diagnosis validation, escalation decisions, and deployment approval — not reading 400 lines of logs."
+>
+> "AI processes. Humans decide."
+
+---
+
+## Q&A — Pocket Answers
+
+| Question | Answer |
+|----------|--------|
+| **Why is auto-handle safe?** | Risk classifier confirms no auth/payment blast radius. Context freshness verified. Sandbox still runs. Nothing is silent — it's all in the audit log. |
+| **Who's accountable for a deploy?** | The approver on record. Gate 2 requires `approve` + rationale — typed, attributed, logged. The AI proposes. A human owns it. |
+| **How does Gate 1 prevent wasted work?** | Wrong diagnosis → wrong patch. Gate 1 lets the engineer inject a correction before any patch is generated. That context feeds back into GPT-4.1's next pass. |
+| **Can this scale to a real SOC?** | Yes. Scoring and routing are policy-configurable. Audit log is append-only JSON — ships directly to a SIEM. Dashboard can point to any audit_log.json. |
+| **What if the AI is wrong at Gate 2?** | Engineer rejects, types feedback. That's injected and GPT-4.1 regenerates. If sandbox fails, it loops back to re-diagnosis automatically. |
+
+---
+
+## Exact Commands Reference
+
+```bash
+# Start everything (server + browser + recording):
+./demo_record.sh
+
+# Scene 2 — auto-handle:
+python3 backtest.py 2
+
+# Scene 3 — manual HIGH risk run:
+python3 main.py 0
+#   Gate 1 handle:  @yourname
+#   Gate 1 choice:  1
+#   Gate 2 handle:  @yourname
+#   Gate 2 approve: approve
+#   Gate 2 reason:  Connection pool fix scoped to src/db — blast radius confirmed minimal
+
+# Scene 4 — full backtest:
+python3 backtest.py
+
+# Stop recording — go back to demo_record.sh terminal, press ENTER
+```
