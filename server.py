@@ -33,6 +33,23 @@ MIME = {
 
 class Handler(http.server.BaseHTTPRequestHandler):
 
+    def do_POST(self):
+        path = self.path.split("?")[0]
+        if path == "/api/audit/clear":
+            self._api_audit_clear()
+        else:
+            self.send_error(404)
+
+    def _api_audit_clear(self):
+        try:
+            open(AUDIT_LOG, "w", encoding="utf-8").close()
+        except IOError as e:
+            body = json.dumps({"ok": False, "error": str(e)}).encode("utf-8")
+            self._respond(500, "application/json; charset=utf-8", body)
+            return
+        body = json.dumps({"ok": True}).encode("utf-8")
+        self._respond(200, "application/json; charset=utf-8", body)
+
     def do_GET(self):
         path = self.path.split("?")[0]
 

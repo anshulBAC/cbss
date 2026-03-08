@@ -767,7 +767,21 @@
     <div class="sb" id="audit">
       <div class="sec-hdr">
         <div class="sec-title">Audit Log</div>
-        <div class="sbadge sbadge-muted" id="audit-count">0 ENTRIES</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="sbadge sbadge-muted" id="audit-count">0 ENTRIES</div>
+          <button id="btn-clear-log" onclick="clearAuditLog()" title="Clear all log entries" style="
+            display:flex;align-items:center;gap:5px;
+            background:var(--red-glow);border:1px solid rgba(244,63,94,0.35);
+            color:var(--red);border-radius:4px;padding:3px 9px;
+            font-family:var(--font-m);font-size:9px;font-weight:600;letter-spacing:0.1em;
+            cursor:pointer;transition:all 0.15s;
+          " onmouseover="this.style.background='rgba(244,63,94,0.22)'" onmouseout="this.style.background='var(--red-glow)'">
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10"/>
+            </svg>
+            CLEAR
+          </button>
+        </div>
       </div>
       <div class="tbl-card">
         <div class="tbl-wrap">
@@ -1331,6 +1345,27 @@
       renderTable(_entries);
     } catch (err) {
       console.warn('Refresh error:', err);
+    }
+  }
+
+  /* ── Clear audit log ─────────────────────────────────── */
+  async function clearAuditLog() {
+    const btn = document.getElementById('btn-clear-log');
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const res = await fetch('/api/audit/clear', { method: 'POST' });
+      if (!res.ok) throw new Error(res.status);
+      _entries = [];
+      renderKPIs(_entries);
+      renderLatest(_entries);
+      renderCompliance(_entries);
+      renderTable(_entries);
+    } catch (err) {
+      console.warn('Clear error:', err);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = `<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10"/></svg> CLEAR`;
     }
   }
 
